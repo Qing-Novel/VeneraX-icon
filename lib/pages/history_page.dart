@@ -143,6 +143,7 @@ class _HistoryPageState extends State<HistoryPage> {
   void showFilterDialog() {
     var readFilter = readFilterSelect;
     var sourceFilter = {...sourceFilterSelect};
+    final sourceValues = sourceFilterValues;
     showDialog(
       context: context,
       builder: (context) {
@@ -167,26 +168,23 @@ class _HistoryPageState extends State<HistoryPage> {
                     ),
                   ),
                   ListTile(title: Text("Filter comic source".tl)),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 320),
-                    child: ListView(
-                      shrinkWrap: true,
-                      children: sourceFilterValues.map((sourceKey) {
-                        return CheckboxListTile(
-                          title: Text(sourceLabel(sourceKey)),
-                          value: sourceFilter.contains(sourceKey),
-                          onChanged: (checked) {
-                            setDialogState(() {
-                              if (checked ?? false) {
-                                sourceFilter.add(sourceKey);
-                              } else {
-                                sourceFilter.remove(sourceKey);
-                              }
-                            });
-                          },
-                        );
-                      }).toList(),
-                    ),
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: sourceValues.map((sourceKey) {
+                      return CheckboxListTile(
+                        title: Text(sourceLabel(sourceKey)),
+                        value: sourceFilter.contains(sourceKey),
+                        onChanged: (checked) {
+                          setDialogState(() {
+                            if (checked ?? false) {
+                              sourceFilter.add(sourceKey);
+                            } else {
+                              sourceFilter.remove(sourceKey);
+                            }
+                          });
+                        },
+                      );
+                    }).toList(),
                   ),
                 ],
               ),
