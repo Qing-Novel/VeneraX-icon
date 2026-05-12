@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:venera/components/components.dart';
 import 'package:venera/foundation/comic_source_update_tasks.dart';
 import 'package:venera/foundation/context.dart';
@@ -98,23 +99,40 @@ class _TasksPageState extends State<TasksPage> {
   }
 
   Widget buildHistoryTasks() {
-    var widgets = <Widget>[
+    var entries = <MapEntry<DateTime, Widget>>[
       ...followUpdateManager.historyTasks.map(
-        (task) => buildFollowUpdateTaskCard(task, expanded: false),
+        (task) => MapEntry(
+          task.finishedAt ?? task.createdAt,
+          buildFollowUpdateTaskCard(task, expanded: false),
+        ),
       ),
       ...historyRefreshManager.historyTasks.map(
-        (task) => buildHistoryRefreshTaskCard(task, expanded: false),
+        (task) => MapEntry(
+          task.finishedAt ?? task.createdAt,
+          buildHistoryRefreshTaskCard(task, expanded: false),
+        ),
       ),
       ...relatedSourceManager.historyTasks.map(
-        (task) => buildRelatedSourceTaskCard(task, expanded: false),
+        (task) => MapEntry(
+          task.finishedAt ?? task.createdAt,
+          buildRelatedSourceTaskCard(task, expanded: false),
+        ),
       ),
       ...sourceMigrationManager.historyTasks.map(
-        (task) => buildSourceMigrationTaskCard(task, expanded: false),
+        (task) => MapEntry(
+          task.finishedAt ?? task.createdAt,
+          buildSourceMigrationTaskCard(task, expanded: false),
+        ),
       ),
       ...comicSourceUpdateManager.historyTasks.map(
-        (task) => buildComicSourceUpdateTaskCard(task, expanded: false),
+        (task) => MapEntry(
+          task.finishedAt ?? task.createdAt,
+          buildComicSourceUpdateTaskCard(task, expanded: false),
+        ),
       ),
     ];
+    entries.sort((a, b) => b.key.compareTo(a.key));
+    var widgets = entries.map((entry) => entry.value).toList();
     return buildTaskWidgets(widgets, "No task history".tl);
   }
 
@@ -126,6 +144,38 @@ class _TasksPageState extends State<TasksPage> {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       children: widgets,
     );
+  }
+
+  Widget buildTaskSubtitle(
+    List<String> parts,
+    DateTime createdAt,
+    DateTime? finishedAt,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(parts.join(" · "), maxLines: 1, overflow: TextOverflow.ellipsis),
+        Text(
+          taskTimeText(createdAt, finishedAt),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: ts.s12.withColor(context.colorScheme.onSurfaceVariant),
+        ),
+      ],
+    );
+  }
+
+  String taskTimeText(DateTime createdAt, DateTime? finishedAt) {
+    return [
+      "Start Time: @time".tlParams({'time': formatTaskTime(createdAt)}),
+      "End Time: @time".tlParams({
+        'time': finishedAt == null ? '-' : formatTaskTime(finishedAt),
+      }),
+    ].join(" · ");
+  }
+
+  String formatTaskTime(DateTime time) {
+    return DateFormat('yyyy-MM-dd HH:mm:ss').format(time);
   }
 
   Widget buildFollowUpdateTaskCard(
@@ -147,12 +197,14 @@ class _TasksPageState extends State<TasksPage> {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
-        subtitle: Text(
+        subtitle: buildTaskSubtitle(
           [
             task.manual ? "Manual".tl : "Automatic".tl,
             followUpdateStatusText(task),
             progressText,
-          ].join(" · "),
+          ],
+          task.createdAt,
+          task.finishedAt,
         ),
         trailing: task.isRunning
             ? TextButton(
@@ -190,8 +242,10 @@ class _TasksPageState extends State<TasksPage> {
         initiallyExpanded: expanded,
         leading: Icon(task.isRunning ? Icons.manage_history : Icons.history),
         title: Text("Refreshing histories".tl),
-        subtitle: Text(
-          [historyRefreshStatusText(task), progressText].join(" · "),
+        subtitle: buildTaskSubtitle(
+          [historyRefreshStatusText(task), progressText],
+          task.createdAt,
+          task.finishedAt,
         ),
         trailing: task.isRunning
             ? TextButton(
@@ -233,8 +287,10 @@ class _TasksPageState extends State<TasksPage> {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
-        subtitle: Text(
-          [relatedSourceStatusText(task), progressText].join(" · "),
+        subtitle: buildTaskSubtitle(
+          [relatedSourceStatusText(task), progressText],
+          task.createdAt,
+          task.finishedAt,
         ),
         trailing: task.isActive
             ? Row(
@@ -287,8 +343,10 @@ class _TasksPageState extends State<TasksPage> {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
-        subtitle: Text(
-          [sourceMigrationStatusText(task), progressText].join(" · "),
+        subtitle: buildTaskSubtitle(
+          [sourceMigrationStatusText(task), progressText],
+          task.createdAt,
+          task.finishedAt,
         ),
         trailing: task.isActive
             ? Row(
@@ -342,8 +400,10 @@ class _TasksPageState extends State<TasksPage> {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
-        subtitle: Text(
-          [comicSourceUpdateStatusText(task), progressText].join(" · "),
+        subtitle: buildTaskSubtitle(
+          [comicSourceUpdateStatusText(task), progressText],
+          task.createdAt,
+          task.finishedAt,
         ),
         trailing: task.isRunning
             ? TextButton(
