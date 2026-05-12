@@ -667,6 +667,10 @@ abstract class FollowUpdatesService {
 
   static bool _isInitialized = false;
 
+  static bool _cancelRequested = false;
+
+  static Timer? _checkerTimer;
+
   static void _check() async {
     if (_isChecking) {
       return;
@@ -675,27 +679,46 @@ abstract class FollowUpdatesService {
     if (folder == null) {
       return;
     }
-    _cancelChecking = () {};
+    _cancelRequested = false;
+    _cancelChecking = () {
+      _cancelRequested = true;
+    };
 
     _isChecking = true;
 
-    while (DataSync().isDownloading) {
-      await Future.delayed(const Duration(milliseconds: 100));
-    }
-
-    FollowUpdateTask? task;
     try {
-      task = FollowUpdateTaskManager.instance.startCheck(folder, manual: false);
+      while (DataSync().isDownloading) {
+        await Future.delayed(const Duration(milliseconds: 100));
+        if (_cancelRequested) {
+          return;
+        }
+      }
+
+      if (_cancelRequested) {
+        return;
+      }
+      var task = FollowUpdateTaskManager.instance.startCheck(
+        folder,
+        manual: false,
+      );
       if (task == null) {
         return;
       }
-      _cancelChecking = () {
-        FollowUpdateTaskManager.instance.cancel(task!.id);
-      };
       var completer = Completer<void>();
-      void onTaskChanged() {
-        if (!task!.isRunning && !completer.isCompleted) {
+      void completeChecking() {
+        if (!completer.isCompleted) {
           completer.complete();
+        }
+      }
+
+      _cancelChecking = () {
+        _cancelRequested = true;
+        FollowUpdateTaskManager.instance.cancel(task.id);
+        completeChecking();
+      };
+      void onTaskChanged() {
+        if (_cancelRequested || !task.isRunning) {
+          completeChecking();
         }
       }
 
@@ -705,6 +728,7 @@ abstract class FollowUpdatesService {
       });
     } finally {
       _cancelChecking = null;
+      _cancelRequested = false;
       _isChecking = false;
     }
   }
@@ -719,7 +743,7 @@ abstract class FollowUpdatesService {
     _check();
     DataSync().addListener(updateFollowUpdatesUI);
     // A short interval will not affect the performance since every comic has a check time.
-    Timer.periodic(const Duration(minutes: 10), (timer) {
+    _checkerTimer ??= Timer.periodic(const Duration(minutes: 10), (timer) {
       _check();
     });
   }
