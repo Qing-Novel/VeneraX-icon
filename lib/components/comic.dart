@@ -49,6 +49,9 @@ class ComicTile extends StatelessWidget {
 
   final int? heroID;
 
+  static final _chapterProgressLoads =
+      <String, Future<ComicChapterProgressInfo>>{};
+
   void _onTap() {
     if (onTap != null) {
       onTap!();
@@ -763,6 +766,84 @@ class ComicTile extends StatelessWidget {
     BuildContext context,
     ComicChapterProgressInfo chapterProgress,
     double maxWidth,
+    History? history,
+  ) {
+    final syncBadge = _buildEpisodeBadgeContent(
+      context,
+      chapterProgress,
+      maxWidth,
+    );
+    if (history == null ||
+        comic.sourceKey == 'local' ||
+        (chapterProgress.currentTitle != null &&
+            chapterProgress.latestTitle != null) ||
+        ComicSource.find(comic.sourceKey)?.loadComicInfo == null) {
+      return syncBadge;
+    }
+    return FutureBuilder(
+      future: _loadChapterProgress(chapterProgress, history),
+      builder: (context, snapshot) {
+        final asyncProgress = snapshot.data;
+        if (asyncProgress == null || !asyncProgress.hasAny) {
+          return syncBadge;
+        }
+        return _buildEpisodeBadgeContent(context, asyncProgress, maxWidth);
+      },
+    );
+  }
+
+  Future<ComicChapterProgressInfo> _loadChapterProgress(
+    ComicChapterProgressInfo initialProgress,
+    History history,
+  ) {
+    final key = [
+      comic.sourceKey,
+      comic.id,
+      history.group ?? 0,
+      history.ep,
+      history.time.millisecondsSinceEpoch,
+    ].join('\u0001');
+    final cached = _chapterProgressLoads[key];
+    if (cached != null) {
+      return cached;
+    }
+    final future = _fetchChapterProgress(initialProgress, history);
+    _chapterProgressLoads[key] = future;
+    if (_chapterProgressLoads.length > 96) {
+      _chapterProgressLoads.remove(_chapterProgressLoads.keys.first);
+    }
+    return future;
+  }
+
+  Future<ComicChapterProgressInfo> _fetchChapterProgress(
+    ComicChapterProgressInfo initialProgress,
+    History history,
+  ) async {
+    final source = ComicSource.find(comic.sourceKey);
+    final loadComicInfo = source?.loadComicInfo;
+    if (loadComicInfo == null) {
+      return initialProgress;
+    }
+    try {
+      final res = await loadComicInfo(comic.id);
+      final details = res.dataOrNull;
+      if (details == null) {
+        return initialProgress;
+      }
+      const repository = ComicStateRepository();
+      repository.mirrorComicDetails(details);
+      final progress = repository.chapterProgressFromDetails(details, history);
+      return progress.hasAny ? progress : initialProgress;
+    } catch (e, s) {
+      Log.error('Comic tile chapter progress', e, s);
+      return initialProgress;
+    }
+  }
+
+  Widget _buildEpisodeBadgeContent(
+    BuildContext context,
+    ComicChapterProgressInfo chapterProgress,
+    double maxWidth,
   ) {
     if (!chapterProgress.hasAny) {
       return const SizedBox();
@@ -862,6 +943,7 @@ class ComicTile extends StatelessWidget {
                       ? const ComicChapterProgressInfo()
                       : chapterProgress,
                   coverWidth - 4,
+                  tileHistory,
                 ),
               ),
             ],
@@ -1031,6 +1113,7 @@ class ComicTile extends StatelessWidget {
                             ? const ComicChapterProgressInfo()
                             : chapterProgress,
                         constraints.maxWidth * 0.72,
+                        history,
                       ),
                     ),
                   ],
