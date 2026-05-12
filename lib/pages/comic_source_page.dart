@@ -207,18 +207,19 @@ class _BodyState extends State<_Body> {
         await showDialog(
           context: App.rootContext,
           builder: (context) => AlertDialog(
-            title: const Text("Reload Configs"),
+            title: Text("Reload Configs".tl),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text("cancel"),
+                child: Text("Cancel".tl),
               ),
               TextButton(
                 onPressed: () async {
+                  Navigator.pop(context);
                   await ComicSourceManager().reload();
                   App.forceRebuild();
                 },
-                child: const Text("continue"),
+                child: Text("Continue".tl),
               ),
             ],
           ),
