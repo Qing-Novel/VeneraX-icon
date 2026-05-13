@@ -52,7 +52,9 @@ export type SourceExplorePage = {
 
 export type SourceCategoryItem = {
   label: string
+  category: string | null
   param: string | null
+  target_page: string | null
 }
 
 export type SourceCategoryPart = {
@@ -77,6 +79,23 @@ export type SourcePageManifest = {
 
 export type SourcePagesResponse = {
   sources: SourcePageManifest[]
+}
+
+export type SourceComicListPart = {
+  title: string
+  comics: SearchComic[]
+}
+
+export type SourceComicListResponse = {
+  source_key: string
+  page: number
+  title: string | null
+  category: string | null
+  param: string | null
+  max_page: number | null
+  next: string | null
+  comics: SearchComic[]
+  parts: SourceComicListPart[]
 }
 
 export type SearchComic = {
@@ -404,6 +423,32 @@ export function getSources() {
 
 export function getSourcePages() {
   return request<SourcePagesResponse>('/api/source-pages')
+}
+
+export function loadSourceExplorePage(sourceKey: string, title: string, page = 1) {
+  return request<SourceComicListResponse>('/api/source-pages/explore', {
+    method: 'POST',
+    body: JSON.stringify({ source_key: sourceKey, title, page })
+  })
+}
+
+export function loadSourceCategoryPage({
+  sourceKey,
+  category,
+  param,
+  options,
+  page = 1
+}: {
+  sourceKey: string
+  category: string
+  param?: string | null
+  options?: string[]
+  page?: number
+}) {
+  return request<SourceComicListResponse>('/api/source-pages/category', {
+    method: 'POST',
+    body: JSON.stringify({ source_key: sourceKey, category, param, options, page })
+  })
 }
 
 export function saveSource(payload: SourceWriteRequest) {

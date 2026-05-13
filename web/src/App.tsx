@@ -36,6 +36,9 @@ import {
   type LibraryResponse,
   type SearchComic,
   type SettingsResponse,
+  type SourceCategoryItem,
+  type SourceCategoryPart,
+  type SourceComicListResponse,
   type SourcePageManifest,
   type SourcePagesResponse,
   type SourceSummary,
@@ -53,6 +56,8 @@ import {
   getWebDavConfig,
   listImportBackups,
   listWebDav,
+  loadSourceCategoryPage,
+  loadSourceExplorePage,
   previewImportBackup,
   saveSource,
   saveWebDavConfig,
@@ -117,6 +122,8 @@ const actionNav = [
   { key: 'tasks', label: '任务', icon: ClipboardList },
   { key: 'settings', label: '设置', icon: Settings }
 ] satisfies Array<{ key: TabKey; label: string; icon: typeof Home }>
+
+const navigationItems = [...primaryNav, ...actionNav]
 
 const emptyData: AppData = {
   health: null,
@@ -351,11 +358,13 @@ export default function App() {
       <SideNav activeTab={activeTab} onSelect={setActiveTab} />
       <main className="main-area">
         <TopBar
+          activeTab={activeTab}
           health={data.health}
           loading={loading}
           error={error}
           lastUpdated={lastUpdated}
           onRefresh={load}
+          onSelect={setActiveTab}
         />
         <div className="content">
           {activeTab === 'home' ? (
@@ -404,10 +413,26 @@ export default function App() {
             />
           ) : null}
           {activeTab === 'explore' ? (
-            <SourcePagesView title="发现" icon={Compass} kind="explore" />
+            <SourcePagesView
+              title="发现"
+              icon={Compass}
+              kind="explore"
+              favorites={data.library.favorites}
+              readerMode={readerMode}
+              onRecordHistory={saveHistory}
+              onSetFavorite={saveFavorite}
+            />
           ) : null}
           {activeTab === 'categories' ? (
-            <SourcePagesView title="分类" icon={Tags} kind="categories" />
+            <SourcePagesView
+              title="分类"
+              icon={Tags}
+              kind="categories"
+              favorites={data.library.favorites}
+              readerMode={readerMode}
+              onRecordHistory={saveHistory}
+              onSetFavorite={saveFavorite}
+            />
           ) : null}
           {activeTab === 'updates' ? (
             <UpdatesView
@@ -482,7 +507,7 @@ function BottomNav({
 }) {
   return (
     <nav className="bottom-nav" aria-label="底部导航">
-      {[...primaryNav, ...actionNav].map((item) => (
+      {primaryNav.map((item) => (
         <NavButton key={item.key} item={item} active={activeTab === item.key} onSelect={onSelect} />
       ))}
     </nav>
@@ -514,17 +539,21 @@ function NavButton({
 }
 
 function TopBar({
+  activeTab,
   health,
   loading,
   error,
   lastUpdated,
-  onRefresh
+  onRefresh,
+  onSelect
 }: {
+  activeTab: TabKey
   health: HealthResponse | null
   loading: boolean
   error: string | null
   lastUpdated: string | null
   onRefresh: () => void
+  onSelect: (tab: TabKey) => void
 }) {
   const isNormal =
     health?.status === 'ok' &&
@@ -532,14 +561,30 @@ function TopBar({
     health.data_dir.trim().length > 0 &&
     health.source_runtime &&
     !error
+  const activeLabel = navigationItems.find((item) => item.key === activeTab)?.label ?? 'Venera'
 
   return (
     <header className="top-bar">
       <div>
-        <h1>Venera</h1>
+        <h1>{activeLabel}</h1>
         <p>{isNormal ? `服务端 ${health.version}` : '服务或数据异常'}</p>
       </div>
       <div className="top-actions">
+        {actionNav.map((item) => {
+          const Icon = item.icon
+          return (
+            <button
+              className={activeTab === item.key ? 'top-action-button active' : 'top-action-button'}
+              key={item.key}
+              type="button"
+              title={item.label}
+              aria-label={item.label}
+              onClick={() => onSelect(item.key)}
+            >
+              <Icon size={20} />
+            </button>
+          )
+        })}
         <StatusPill ok={isNormal} text={isNormal ? '正常' : '异常'} />
         {lastUpdated ? <span className="muted-text">{lastUpdated}</span> : null}
         <button className="icon-button" type="button" onClick={onRefresh} aria-label="刷新">
@@ -1511,15 +1556,34 @@ function LibraryReader({
 function SourcePagesView({
   title,
   icon: Icon,
-  kind
+  kind,
+  favorites,
+  readerMode,
+  onRecordHistory,
+  onSetFavorite
 }: {
   title: string
   icon: typeof Home
   kind: 'explore' | 'categories'
+  favorites: LibraryItem[]
+  readerMode: ReaderMode
+  onRecordHistory: (payload: HistoryWriteRequest) => Promise<void>
+  onSetFavorite: (payload: FavoriteWriteRequest) => Promise<void>
 }) {
   const [data, setData] = useState<SourcePagesResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [listTarget, setListTarget] = useState<SourceListTarget | null>(null)
+  const [list, setList] = useState<SourceComicListResponse | null>(null)
+  const [listLoading, setListLoading] = useState(false)
+  const [listMessage, setListMessage] = useState<string | null>(null)
+  const [selectedComic, setSelectedComic] = useState<ComicInfo | null>(null)
+  const [comicSourceKey, setComicSourceKey] = useState<string | null>(null)
+  const [comicMessage, setComicMessage] = useState<string | null>(null)
+  const [images, setImages] = useState<string[]>([])
+  const [activeEpisodeTitle, setActiveEpisodeTitle] = useState<string | null>(null)
+  const [loadingComic, setLoadingComic] = useState(false)
+  const [loadingImages, setLoadingImages] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -1584,6 +1648,144 @@ function SourcePagesView({
 
   const selectedTab = tabs.find((tab) => tab.key === selectedKey) ?? tabs[0]
 
+  const resetReader = useCallback(() => {
+    setSelectedComic(null)
+    setComicSourceKey(null)
+    setComicMessage(null)
+    setImages([])
+    setActiveEpisodeTitle(null)
+    setLoadingComic(false)
+    setLoadingImages(false)
+  }, [])
+
+  const loadSourceList = useCallback(
+    async (target: SourceListTarget, page: number, append = false) => {
+      setListLoading(true)
+      setListMessage(null)
+      try {
+        const response = await requestSourceList(target, page)
+        setList((current) => (append && current ? mergeSourceComicList(current, response) : response))
+        setListTarget(target)
+        setListMessage(hasSourceComics(response) ? null : '暂无条目')
+      } catch (err) {
+        if (!append) setList(null)
+        setListMessage(err instanceof Error ? err.message : '列表加载失败')
+      } finally {
+        setListLoading(false)
+      }
+    },
+    []
+  )
+
+  useEffect(() => {
+    resetReader()
+    setList(null)
+    setListMessage(null)
+    if (!selectedTab) {
+      setListTarget(null)
+      return
+    }
+    if (kind === 'explore') {
+      const target: SourceListTarget = { kind: 'explore', tab: selectedTab }
+      setListTarget(target)
+      void loadSourceList(target, 1)
+    } else {
+      setListTarget(null)
+    }
+  }, [kind, selectedTab?.key, loadSourceList, resetReader])
+
+  const activeCategoryKey =
+    listTarget?.kind === 'category' || listTarget?.kind === 'search'
+      ? categoryItemKey(listTarget.tab, listTarget.part, listTarget.item)
+      : null
+
+  const handleCategorySelect = (part: SourceCategoryPart, item: SourceCategoryItem) => {
+    if (!selectedTab) return
+    resetReader()
+    setList(null)
+    const targetPage = item.target_page ?? part.item_type ?? 'category'
+    const target: SourceListTarget =
+      targetPage === 'search'
+        ? {
+            kind: 'search',
+            tab: selectedTab,
+            part,
+            item,
+            keyword: item.param ?? item.category ?? item.label
+          }
+        : { kind: 'category', tab: selectedTab, part, item }
+    setListTarget(target)
+    void loadSourceList(target, 1)
+  }
+
+  const handleLoadMore = () => {
+    if (!listTarget || !list || listLoading) return
+    void loadSourceList(listTarget, list.page + 1, true)
+  }
+
+  const handleOpenComic = async (comic: SearchComic) => {
+    const sourceKey = list?.source_key ?? selectedTab?.source.source_key
+    if (!sourceKey) return
+
+    setLoadingComic(true)
+    setComicSourceKey(sourceKey)
+    setComicMessage(null)
+    setImages([])
+    setActiveEpisodeTitle(null)
+    try {
+      const response = await getComicInfo(sourceKey, comic.id)
+      setSelectedComic(response.comic)
+      setComicMessage(response.comic.episodes.length === 0 ? '暂无章节' : null)
+    } catch (err) {
+      setSelectedComic(null)
+      setComicMessage(err instanceof Error ? err.message : '详情加载失败')
+    } finally {
+      setLoadingComic(false)
+    }
+  }
+
+  const handleLoadImages = async (episode: ComicEpisode) => {
+    if (!comicSourceKey || !selectedComic) return
+
+    setLoadingImages(true)
+    setComicMessage(null)
+    try {
+      const response = await getComicPages(comicSourceKey, selectedComic.id, episode.id)
+      setImages(response.images)
+      setActiveEpisodeTitle(episode.title)
+      setComicMessage(response.images.length === 0 ? '暂无图片' : null)
+      if (response.images.length > 0) {
+        await onRecordHistory({
+          source_key: comicSourceKey,
+          comic_id: selectedComic.id,
+          title: selectedComic.title,
+          subtitle: selectedComic.subtitle,
+          cover: selectedComic.cover,
+          episode_id: episode.id,
+          episode_title: episode.title
+        })
+      }
+    } catch (err) {
+      setImages([])
+      setActiveEpisodeTitle(null)
+      setComicMessage(err instanceof Error ? err.message : '章节加载失败')
+    } finally {
+      setLoadingImages(false)
+    }
+  }
+
+  const handleFavoriteChange = async (comic: ComicInfo, favorite: boolean) => {
+    if (!comicSourceKey) return
+    await onSetFavorite({
+      source_key: comicSourceKey,
+      comic_id: comic.id,
+      title: comic.title,
+      subtitle: comic.subtitle,
+      cover: comic.cover,
+      favorite
+    })
+  }
+
   return (
     <div className="view-stack">
       <Panel title={title} action={loading ? '...' : String(tabs.length)}>
@@ -1593,10 +1795,55 @@ function SourcePagesView({
         {!error && !loading && selectedTab ? (
           <>
             <SourceAppTabs tabs={tabs} selectedKey={selectedTab.key} onSelect={setSelectedKey} />
-            <SourcePageContent tab={selectedTab} kind={kind} />
+            <SourcePageContent
+              tab={selectedTab}
+              kind={kind}
+              activeCategoryKey={activeCategoryKey}
+              onCategorySelect={handleCategorySelect}
+            />
+            <SourceComicSections
+              response={list}
+              loading={listLoading}
+              message={listMessage}
+              showEmpty={kind === 'explore' || Boolean(listTarget)}
+              onSelect={handleOpenComic}
+            />
+            {list && canLoadMoreSourceList(list) ? (
+              <button
+                className="icon-text-button subtle library-more-button"
+                type="button"
+                disabled={listLoading}
+                onClick={handleLoadMore}
+              >
+                {listLoading ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+                {listLoading ? '加载中' : `加载更多 (${list.page}/${list.max_page})`}
+              </button>
+            ) : null}
           </>
         ) : null}
       </Panel>
+      {loadingComic || selectedComic || comicMessage ? (
+        <Panel title="漫画详情" action={selectedComic ? String(selectedComic.episodes.length) : undefined}>
+          <ComicDetails
+            comic={selectedComic}
+            images={images}
+            activeEpisodeTitle={activeEpisodeTitle}
+            readerMode={readerMode}
+            favorite={Boolean(
+              selectedComic &&
+                comicSourceKey &&
+                favorites.some(
+                  (item) => item.source_key === comicSourceKey && item.comic_id === selectedComic.id
+                )
+            )}
+            loadingComic={loadingComic}
+            loadingImages={loadingImages}
+            message={comicMessage}
+            onLoadImages={handleLoadImages}
+            onFavoriteChange={handleFavoriteChange}
+          />
+        </Panel>
+      ) : null}
     </div>
   )
 }
@@ -1608,6 +1855,17 @@ type SourcePageTab = {
   source: SourcePageManifest
   page?: SourcePageManifest['explore_pages'][number]
 }
+
+type SourceListTarget =
+  | { kind: 'explore'; tab: SourcePageTab }
+  | { kind: 'category'; tab: SourcePageTab; part: SourceCategoryPart; item: SourceCategoryItem }
+  | {
+      kind: 'search'
+      tab: SourcePageTab
+      part: SourceCategoryPart
+      item: SourceCategoryItem
+      keyword: string
+    }
 
 function SourceAppTabs({
   tabs,
@@ -1638,10 +1896,14 @@ function SourceAppTabs({
 
 function SourcePageContent({
   tab,
-  kind
+  kind,
+  activeCategoryKey,
+  onCategorySelect
 }: {
   tab: SourcePageTab
   kind: 'explore' | 'categories'
+  activeCategoryKey: string | null
+  onCategorySelect: (part: SourceCategoryPart, item: SourceCategoryItem) => void
 }) {
   if (kind === 'explore') {
     return (
@@ -1650,7 +1912,6 @@ function SourcePageContent({
           <strong>{tab.title}</strong>
           {tab.subtitle ? <span>{tab.subtitle}</span> : null}
         </div>
-        <EmptyLine icon={Compass} text="暂无条目" />
       </div>
     )
   }
@@ -1668,19 +1929,174 @@ function SourcePageContent({
               <strong>{part.title}</strong>
               <span>{part.items.length}</span>
             </div>
-            <div className="category-chip-list">
-              {visible.map((item) => (
-                <span className="category-chip" key={`${part.title}:${item.label}:${item.param ?? ''}`}>
-                  {item.label}
-                </span>
-              ))}
-              {remaining > 0 ? <span className="category-chip muted">+{remaining}</span> : null}
-            </div>
+                <div className="category-chip-list">
+                  {visible.map((item) => (
+                    <button
+                      className={
+                        categoryItemKey(tab, part, item) === activeCategoryKey
+                          ? 'category-chip active'
+                          : 'category-chip'
+                      }
+                      key={`${part.title}:${item.label}:${item.param ?? ''}`}
+                      type="button"
+                      onClick={() => onCategorySelect(part, item)}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                  {remaining > 0 ? <span className="category-chip muted">+{remaining}</span> : null}
+                </div>
           </section>
         )
       })}
     </div>
   )
+}
+
+async function requestSourceList(target: SourceListTarget, page: number): Promise<SourceComicListResponse> {
+  if (target.kind === 'explore') {
+    return loadSourceExplorePage(target.tab.source.source_key, target.tab.title, page)
+  }
+
+  const category = target.item.category ?? target.item.label
+  if (target.kind === 'search') {
+    const response = await searchComics(target.tab.source.source_key, target.keyword, page)
+    return {
+      source_key: response.source_key,
+      page: response.page,
+      title: null,
+      category,
+      param: target.item.param,
+      max_page: response.max_page,
+      next: response.next,
+      comics: response.comics,
+      parts: []
+    }
+  }
+
+  return loadSourceCategoryPage({
+    sourceKey: target.tab.source.source_key,
+    category,
+    param: target.item.param,
+    page
+  })
+}
+
+function SourceComicSections({
+  response,
+  loading,
+  message,
+  showEmpty,
+  onSelect
+}: {
+  response: SourceComicListResponse | null
+  loading: boolean
+  message: string | null
+  showEmpty: boolean
+  onSelect: (comic: SearchComic) => void
+}) {
+  if (loading && !response) {
+    return <EmptyLine icon={Loader2} text="加载中" />
+  }
+  if (message && (!response || !hasSourceComics(response))) {
+    return <EmptyLine icon={WifiOff} text={message} />
+  }
+  if (!response) return showEmpty ? <EmptyLine icon={Compass} text="暂无条目" /> : null
+
+  return (
+    <div className="source-list-content">
+      {response.comics.length > 0 ? (
+        <SourceComicGrid comics={response.comics} onSelect={onSelect} />
+      ) : null}
+      {response.parts.map((part, index) => (
+        <section className="source-comic-section" key={`${part.title}:${index}`}>
+          {part.title ? (
+            <div className="source-section-title">
+              <strong>{part.title}</strong>
+              <span>{part.comics.length}</span>
+            </div>
+          ) : null}
+          <SourceComicGrid comics={part.comics} onSelect={onSelect} />
+        </section>
+      ))}
+      {loading ? <EmptyLine icon={Loader2} text="加载中" /> : null}
+    </div>
+  )
+}
+
+function SourceComicGrid({
+  comics,
+  onSelect
+}: {
+  comics: SearchComic[]
+  onSelect: (comic: SearchComic) => void
+}) {
+  return (
+    <div className="comic-grid">
+      {comics.map((comic) => (
+        <button
+          className="comic-tile"
+          key={comic.id}
+          type="button"
+          title={comic.title}
+          onClick={() => onSelect(comic)}
+        >
+          <CoverImage url={comic.cover} iconSize={18} />
+          <strong>{comic.title}</strong>
+          {comic.subtitle ? <small>{comic.subtitle}</small> : null}
+          {comic.tags.length > 0 ? <small>{comic.tags.slice(0, 2).join(' / ')}</small> : null}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function mergeSourceComicList(
+  current: SourceComicListResponse,
+  incoming: SourceComicListResponse
+): SourceComicListResponse {
+  const parts = [...current.parts]
+  incoming.parts.forEach((part) => {
+    const index = parts.findIndex((item) => item.title === part.title)
+    if (index >= 0) {
+      parts[index] = {
+        ...parts[index],
+        comics: mergeSourceComics(parts[index].comics, part.comics)
+      }
+    } else {
+      parts.push(part)
+    }
+  })
+
+  return {
+    ...incoming,
+    comics: mergeSourceComics(current.comics, incoming.comics),
+    parts
+  }
+}
+
+function mergeSourceComics(current: SearchComic[], incoming: SearchComic[]) {
+  const seen = new Set(current.map((comic) => comic.id))
+  return [
+    ...current,
+    ...incoming.filter((comic) => {
+      if (seen.has(comic.id)) return false
+      seen.add(comic.id)
+      return true
+    })
+  ]
+}
+
+function hasSourceComics(response: SourceComicListResponse) {
+  return response.comics.length > 0 || response.parts.some((part) => part.comics.length > 0)
+}
+
+function canLoadMoreSourceList(response: SourceComicListResponse) {
+  return response.max_page != null && response.page < response.max_page
+}
+
+function categoryItemKey(tab: SourcePageTab, part: SourceCategoryPart, item: SourceCategoryItem) {
+  return `${tab.source.source_key}:${part.title}:${item.label}:${item.category ?? ''}:${item.param ?? ''}`
 }
 
 function TasksView() {

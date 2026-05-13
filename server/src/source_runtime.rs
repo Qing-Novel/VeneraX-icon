@@ -6,7 +6,10 @@ use tokio::{process::Command, time::timeout};
 use crate::{
     config::AppConfig,
     error::{ApiError, ApiResult},
-    models::{RuntimeComicInfo, RuntimeComicPages, RuntimeSearchResult, RuntimeSourcePageManifest},
+    models::{
+        RuntimeComicInfo, RuntimeComicPages, RuntimeSearchResult, RuntimeSourceComicList,
+        RuntimeSourcePageManifest,
+    },
 };
 
 #[derive(Deserialize)]
@@ -52,6 +55,43 @@ pub async fn manifest(
 ) -> ApiResult<RuntimeSourcePageManifest> {
     let source = source_path.display().to_string();
     run_runtime(config, &["manifest", source.as_str()]).await
+}
+
+pub async fn explore_page(
+    config: &AppConfig,
+    source_path: &Path,
+    title: &str,
+    page: u32,
+) -> ApiResult<RuntimeSourceComicList> {
+    let source = source_path.display().to_string();
+    let page = page.to_string();
+    run_runtime(config, &["explore", source.as_str(), title, page.as_str()]).await
+}
+
+pub async fn category_page(
+    config: &AppConfig,
+    source_path: &Path,
+    category: &str,
+    param: Option<&str>,
+    options: &[String],
+    page: u32,
+) -> ApiResult<RuntimeSourceComicList> {
+    let source = source_path.display().to_string();
+    let param = param.unwrap_or("");
+    let options = serde_json::to_string(options).unwrap_or_else(|_| "[]".to_string());
+    let page = page.to_string();
+    run_runtime(
+        config,
+        &[
+            "category",
+            source.as_str(),
+            category,
+            param,
+            options.as_str(),
+            page.as_str(),
+        ],
+    )
+    .await
 }
 
 async fn run_runtime<T>(config: &AppConfig, args: &[&str]) -> ApiResult<T>

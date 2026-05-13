@@ -166,7 +166,9 @@ pub struct SourceExplorePage {
 #[derive(Default, Serialize, Deserialize)]
 pub struct SourceCategoryItem {
     pub label: String,
+    pub category: Option<String>,
     pub param: Option<String>,
+    pub target_page: Option<String>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -201,6 +203,49 @@ pub struct SourcePageManifest {
 #[derive(Serialize)]
 pub struct SourcePagesResponse {
     pub sources: Vec<SourcePageManifest>,
+}
+
+#[derive(Deserialize)]
+pub struct SourceExploreRequest {
+    pub source_key: String,
+    pub title: String,
+    pub page: Option<u32>,
+}
+
+#[derive(Deserialize)]
+pub struct SourceCategoryRequest {
+    pub source_key: String,
+    pub category: String,
+    pub param: Option<String>,
+    pub options: Option<Vec<String>>,
+    pub page: Option<u32>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SourceComicListPart {
+    pub title: String,
+    pub comics: Vec<SearchComic>,
+}
+
+#[derive(Deserialize)]
+pub struct RuntimeSourceComicList {
+    pub max_page: Option<u32>,
+    pub next: Option<String>,
+    pub comics: Vec<SearchComic>,
+    pub parts: Vec<SourceComicListPart>,
+}
+
+#[derive(Serialize)]
+pub struct SourceComicListResponse {
+    pub source_key: String,
+    pub page: u32,
+    pub title: Option<String>,
+    pub category: Option<String>,
+    pub param: Option<String>,
+    pub max_page: Option<u32>,
+    pub next: Option<String>,
+    pub comics: Vec<SearchComic>,
+    pub parts: Vec<SourceComicListPart>,
 }
 
 #[derive(Serialize)]

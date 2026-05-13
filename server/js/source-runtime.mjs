@@ -814,6 +814,15 @@ function normalizeComic(item, index) {
   }
 }
 
+function normalizeMaxPage(...values) {
+  for (const value of values) {
+    if (value == null) continue
+    const number = Number.parseInt(value, 10)
+    if (Number.isFinite(number) && number > 0) return number
+  }
+  return null
+}
+
 async function search(source, keyword, page) {
   if (typeof source.search?.load === 'function') {
     const result = await source.search.load(keyword, [], page)
@@ -861,6 +870,47 @@ function sourceManifest(source) {
   }
 }
 
+async function explorePage(source, title, page) {
+  const pages = Array.isArray(source.explore) ? source.explore : []
+  const data = pages.find((item, index) => {
+    const raw = item && typeof item === 'object' ? item : { title: item }
+    const pageTitle = text(raw.title ?? raw.name ?? raw.label ?? `Page ${index + 1}`)
+    return pageTitle === title
+  })
+
+  if (!data || typeof data !== 'object') {
+    throw new Error(`explore page not found: ${title}`)
+  }
+
+  if (typeof data.load === 'function') {
+    return normalizeSourceListResult(await data.load(page))
+  }
+  if (typeof data.loadPage === 'function') {
+    return normalizeSourceListResult(await data.loadPage(page))
+  }
+  if (typeof data.loadMultiPart === 'function') {
+    return normalizeSourceListResult(await data.loadMultiPart())
+  }
+  if (typeof data.loadMixed === 'function') {
+    return normalizeSourceListResult(await data.loadMixed(page))
+  }
+  if (typeof data.loadNext === 'function') {
+    return normalizeSourceListResult(await data.loadNext(null))
+  }
+  throw new Error(`explore page does not implement load: ${title}`)
+}
+
+async function categoryPage(source, category, param, options, page) {
+  if (typeof source.categoryComics?.load !== 'function') {
+    throw new Error('source does not implement categoryComics.load')
+  }
+
+  const selectedOptions = options.length > 0 ? options : defaultCategoryOptions(source.categoryComics)
+  return normalizeSourceListResult(
+    await source.categoryComics.load(category, param || null, selectedOptions, page)
+  )
+}
+
 function normalizeExplorePages(value) {
   if (!Array.isArray(value)) return []
   return value
@@ -894,12 +944,15 @@ function normalizeCategoryPart(part, index) {
   const raw = part && typeof part === 'object' ? part : { name: `分类 ${index + 1}` }
   const categories = normalizeCategoryItems(raw.categories ?? raw.items ?? raw.values)
   const params = normalizeStringList(raw.categoryParams ?? raw.params ?? raw.parameters)
+  const partTargetPage = text(raw.itemType)
   return {
     title: text(raw.name ?? raw.title ?? raw.label ?? `分类 ${index + 1}`) ?? `分类 ${index + 1}`,
     item_type: text(raw.itemType ?? raw.type),
     items: categories.map((item, itemIndex) => ({
       label: item.label,
-      param: item.param ?? params[itemIndex] ?? null
+      category: item.category ?? item.label,
+      param: item.param ?? params[itemIndex] ?? null,
+      target_page: item.target_page ?? partTargetPage
     }))
   }
 }
@@ -909,18 +962,34 @@ function normalizeCategoryItems(value) {
     return value
       .map((item) => {
         if (item && typeof item === 'object') {
+          const target = item.target && typeof item.target === 'object' ? item.target : null
+          const attributes =
+            target?.attributes && typeof target.attributes === 'object'
+              ? target.attributes
+              : target?.attrs && typeof target.attrs === 'object'
+                ? target.attrs
+                : null
           const label = text(item.label ?? item.title ?? item.name ?? item.text ?? item.value ?? item.id)
-          return label ? { label, param: text(item.param ?? item.value ?? item.id) } : null
+          return label
+            ? {
+                label,
+                category: text(item.category ?? attributes?.category ?? item.keyword),
+                param: text(item.param ?? attributes?.param ?? item.value ?? item.id),
+                target_page: text(item.page ?? target?.page ?? item.action)
+              }
+            : null
         }
         const label = text(item)
-        return label ? { label, param: null } : null
+        return label ? { label, category: label, param: null, target_page: null } : null
       })
       .filter(Boolean)
   }
   if (value && typeof value === 'object') {
     return Object.entries(value).map(([key, label]) => ({
       label: text(label) ?? key,
-      param: key
+      category: text(label) ?? key,
+      param: key,
+      target_page: null
     }))
   }
   return []
@@ -946,6 +1015,112 @@ function normalizeSearchResult(result) {
     next: result?.next ?? null,
     comics: comics.map(normalizeComic)
   }
+}
+
+function normalizeSourceListResult(result) {
+  const envelope = unwrapLoadResult(result)
+  const value = envelope.value
+  const parts = []
+  const comics = []
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      if (Array.isArray(item)) {
+        parts.push({ title: '', comics: item.map(normalizeComic) })
+      } else if (item && typeof item === 'object' && Array.isArray(item.comics)) {
+        parts.push({
+          title: text(item.title ?? item.name ?? item.label) ?? '',
+          comics: item.comics.map(normalizeComic)
+        })
+      } else {
+        comics.push(item)
+      }
+    }
+  } else if (value && typeof value === 'object') {
+    if (Array.isArray(value.parts)) {
+      parts.push(
+        ...value.parts
+          .filter((part) => Array.isArray(part?.comics))
+          .map((part) => ({
+            title: text(part.title ?? part.name ?? part.label) ?? '',
+            comics: part.comics.map(normalizeComic)
+          }))
+      )
+    }
+    if (Array.isArray(value.comics)) {
+      comics.push(...value.comics)
+    } else if (!Array.isArray(value.parts)) {
+      for (const [title, items] of Object.entries(value)) {
+        if (Array.isArray(items)) {
+          parts.push({
+            title,
+            comics: items.map(normalizeComic)
+          })
+        }
+      }
+    }
+  }
+
+  return {
+    max_page: normalizeMaxPage(envelope.maxPage, value?.maxPage, value?.max_page),
+    next: text(envelope.next ?? value?.next),
+    comics: comics.map(normalizeComic),
+    parts: parts.filter((part) => part.comics.length > 0)
+  }
+}
+
+function unwrapLoadResult(result) {
+  if (result && typeof result === 'object' && result.error) {
+    throw new Error(text(result.errorMessage ?? result.message) ?? 'source returned error')
+  }
+  if (
+    result &&
+    typeof result === 'object' &&
+    Object.hasOwn(result, 'data') &&
+    !Array.isArray(result.comics) &&
+    !Array.isArray(result.parts)
+  ) {
+    return {
+      value: result.data,
+      maxPage: result.subData ?? result.maxPage ?? result.max_page,
+      next: result.next
+    }
+  }
+  return {
+    value: result,
+    maxPage: result?.maxPage ?? result?.max_page,
+    next: result?.next
+  }
+}
+
+function defaultCategoryOptions(categoryComics) {
+  const groups = categoryComics.options ?? categoryComics.optionList ?? []
+  if (!Array.isArray(groups)) return []
+  return groups.map(defaultOptionValue).filter((value) => value != null)
+}
+
+function defaultOptionValue(group) {
+  if (!group || typeof group !== 'object') return ''
+  const explicit = text(group.defaultVal ?? group.default ?? group.value)
+  if (explicit != null) return explicit
+
+  const options = group.options ?? group.values
+  if (Array.isArray(options)) {
+    return optionValue(options[0])
+  }
+  if (options && typeof options === 'object') {
+    return Object.keys(options)[0] ?? ''
+  }
+  return ''
+}
+
+function optionValue(option) {
+  if (option && typeof option === 'object') {
+    return text(option.value ?? option.key ?? option.id ?? option.label ?? option.text) ?? ''
+  }
+  const value = text(option) ?? ''
+  const separator = value.indexOf('-')
+  return separator > 0 ? value.slice(0, separator) : value
 }
 
 function normalizeComicInfo(result, fallbackId) {
@@ -1000,11 +1175,23 @@ function isEpisodeObject(value) {
 }
 
 async function main() {
-  const [action, sourcePath, first = '', second = '1'] = process.argv.slice(2)
+  const [action, sourcePath, first = '', second = '1', third = '[]', fourth = '1'] =
+    process.argv.slice(2)
   const source = await loadSource(sourcePath, { runInit: action !== 'manifest' })
   let data
   if (action === 'manifest') {
     data = sourceManifest(source)
+  } else if (action === 'explore') {
+    data = await explorePage(source, first, Number.parseInt(second, 10) || 1)
+  } else if (action === 'category') {
+    let options = []
+    try {
+      const parsed = JSON.parse(third || '[]')
+      options = Array.isArray(parsed) ? parsed.map((item) => String(item)) : []
+    } catch {
+      options = []
+    }
+    data = await categoryPage(source, first, second || null, options, Number.parseInt(fourth, 10) || 1)
   } else if (action === 'search') {
     data = await search(source, first, Number.parseInt(second, 10) || 1)
   } else if (action === 'info') {

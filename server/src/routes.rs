@@ -26,9 +26,10 @@ use crate::{
         ImageProxyQuery, ImportBackupApplyRequest, ImportBackupApplyResponse,
         ImportBackupPreviewRequest, ImportBackupPreviewResponse, ImportBackupsResponse,
         LibraryItem, LibraryQuery, LibraryResponse, SearchRequest, SearchResponse, SettingsPatch,
-        SettingsResponse, SourcePageManifest, SourcePagesResponse, SourcePatchRequest,
-        SourceSummary, SourceWriteRequest, WebDavConfigRequest, WebDavConfigResponse,
-        WebDavDownloadRequest, WebDavDownloadResponse, WebDavListRequest, WebDavListResponse,
+        SettingsResponse, SourceCategoryRequest, SourceComicListResponse, SourceExploreRequest,
+        SourcePageManifest, SourcePagesResponse, SourcePatchRequest, SourceSummary,
+        SourceWriteRequest, WebDavConfigRequest, WebDavConfigResponse, WebDavDownloadRequest,
+        WebDavDownloadResponse, WebDavListRequest, WebDavListResponse,
     },
     source_runtime,
     state::AppState,
@@ -57,6 +58,8 @@ pub fn api_router() -> Router<AppState> {
         .route("/imports/apply", post(apply_import_backup))
         .route("/sources", get(list_sources).post(upsert_source))
         .route("/source-pages", get(list_source_pages))
+        .route("/source-pages/explore", post(load_source_explore_page))
+        .route("/source-pages/category", post(load_source_category_page))
         .route("/sources/{key}", patch(update_source).delete(delete_source))
         .route("/search", post(search_comics))
         .route("/comic/info", post(comic_info))
@@ -613,6 +616,81 @@ async fn list_source_pages(State(state): State<AppState>) -> ApiResult<Json<Sour
     }
 
     Ok(Json(SourcePagesResponse { sources }))
+}
+
+async fn load_source_explore_page(
+    State(state): State<AppState>,
+    Json(payload): Json<SourceExploreRequest>,
+) -> ApiResult<Json<SourceComicListResponse>> {
+    if !is_valid_source_key(&payload.source_key) {
+        return Err(ApiError::BadRequest("invalid source key".to_string()));
+    }
+    let title = payload.title.trim();
+    if title.is_empty() {
+        return Err(ApiError::BadRequest(
+            "explore page title cannot be empty".to_string(),
+        ));
+    }
+
+    let page = payload.page.unwrap_or(1).max(1);
+    let file_name = source_file_name(&state, &payload.source_key)?;
+    let source_path = state.config.sources_dir().join(file_name);
+    let result = source_runtime::explore_page(&state.config, &source_path, title, page).await?;
+
+    Ok(Json(SourceComicListResponse {
+        source_key: payload.source_key,
+        page,
+        title: Some(title.to_string()),
+        category: None,
+        param: None,
+        max_page: result.max_page,
+        next: result.next,
+        comics: result.comics,
+        parts: result.parts,
+    }))
+}
+
+async fn load_source_category_page(
+    State(state): State<AppState>,
+    Json(payload): Json<SourceCategoryRequest>,
+) -> ApiResult<Json<SourceComicListResponse>> {
+    if !is_valid_source_key(&payload.source_key) {
+        return Err(ApiError::BadRequest("invalid source key".to_string()));
+    }
+    let category = payload.category.trim();
+    if category.is_empty() {
+        return Err(ApiError::BadRequest("category cannot be empty".to_string()));
+    }
+
+    let page = payload.page.unwrap_or(1).max(1);
+    let param = payload.param.and_then(|value| {
+        let value = value.trim().to_string();
+        (!value.is_empty()).then_some(value)
+    });
+    let options = payload.options.unwrap_or_default();
+    let file_name = source_file_name(&state, &payload.source_key)?;
+    let source_path = state.config.sources_dir().join(file_name);
+    let result = source_runtime::category_page(
+        &state.config,
+        &source_path,
+        category,
+        param.as_deref(),
+        &options,
+        page,
+    )
+    .await?;
+
+    Ok(Json(SourceComicListResponse {
+        source_key: payload.source_key,
+        page,
+        title: None,
+        category: Some(category.to_string()),
+        param,
+        max_page: result.max_page,
+        next: result.next,
+        comics: result.comics,
+        parts: result.parts,
+    }))
 }
 
 async fn upsert_source(
