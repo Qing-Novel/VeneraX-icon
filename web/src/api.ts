@@ -286,6 +286,16 @@ export type WebDavDownloadResponse = {
   content_type: string | null
 }
 
+export type WebDavUploadResponse = {
+  path: string
+  file_name: string
+  local_path: string
+  remote_path: string
+  size: number
+  uploaded: boolean
+  content_type: string | null
+}
+
 export type ImportBackupSummary = {
   file_name: string
   path: string
@@ -433,6 +443,13 @@ export function downloadWebDav(path: string) {
   return request<WebDavDownloadResponse>('/api/webdav/download', {
     method: 'POST',
     body: JSON.stringify({ path })
+  })
+}
+
+export function uploadWebDav(dryRun = false) {
+  return request<WebDavUploadResponse>('/api/webdav/upload', {
+    method: 'POST',
+    body: JSON.stringify({ dry_run: dryRun })
   })
 }
 

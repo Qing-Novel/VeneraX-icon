@@ -1373,6 +1373,13 @@ button {
   background: var(--surface-soft);
 }
 
+.webdav-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
 .webdav-list {
   display: grid;
   gap: 8px;

@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::PathBuf,
+};
 
 use axum::{
     extract::{Path, Query, State},
@@ -17,6 +20,7 @@ use sha2::{Digest, Sha256};
 use tokio::fs;
 
 use crate::{
+    backup_export,
     error::{ApiError, ApiResult},
     image_proxy, import_preview,
     models::{
@@ -30,7 +34,7 @@ use crate::{
         SourcePageManifest, SourcePagesResponse, SourcePatchRequest, SourceSettingPatchRequest,
         SourceSettingsResponse, SourceSummary, SourceWriteRequest, WebDavConfigRequest,
         WebDavConfigResponse, WebDavDownloadRequest, WebDavDownloadResponse, WebDavListRequest,
-        WebDavListResponse,
+        WebDavListResponse, WebDavUploadRequest, WebDavUploadResponse,
     },
     source_runtime,
     state::AppState,
@@ -54,6 +58,7 @@ pub fn api_router() -> Router<AppState> {
         )
         .route("/webdav/list", post(list_webdav))
         .route("/webdav/download", post(download_webdav))
+        .route("/webdav/upload", post(upload_webdav))
         .route("/imports/backups", get(list_import_backups))
         .route("/imports/preview", post(preview_import_backup))
         .route("/imports/apply", post(apply_import_backup))
@@ -376,6 +381,27 @@ async fn download_webdav(
     let local_path = import_dir.join(&file_name);
     let response =
         webdav_runtime::download(&state.config, &webdav_config, &path, &local_path).await?;
+    Ok(Json(response))
+}
+
+async fn upload_webdav(
+    State(state): State<AppState>,
+    Json(payload): Json<WebDavUploadRequest>,
+) -> ApiResult<Json<WebDavUploadResponse>> {
+    let backup = backup_export::export_backup(&state).await?;
+    if payload.dry_run.unwrap_or(false) {
+        return Ok(Json(backup));
+    }
+
+    let webdav_config = read_webdav_config(&state)?;
+    let local_path = PathBuf::from(&backup.local_path);
+    let response = webdav_runtime::upload(
+        &state.config,
+        &webdav_config,
+        &backup.remote_path,
+        &local_path,
+    )
+    .await?;
     Ok(Json(response))
 }
 
@@ -1254,7 +1280,7 @@ fn read_webdav_config_response(state: &AppState) -> ApiResult<WebDavConfigRespon
             username,
             root_path,
             password_configured: password.is_some_and(|value| !value.is_empty()),
-            read_only: true,
+            read_only: false,
             updated_at,
         });
     }
@@ -1264,7 +1290,7 @@ fn read_webdav_config_response(state: &AppState) -> ApiResult<WebDavConfigRespon
         username: None,
         root_path: "/".to_string(),
         password_configured: false,
-        read_only: true,
+        read_only: false,
         updated_at: None,
     })
 }

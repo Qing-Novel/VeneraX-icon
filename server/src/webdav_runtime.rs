@@ -6,7 +6,7 @@ use tokio::{process::Command, time::timeout};
 use crate::{
     config::AppConfig,
     error::{ApiError, ApiResult},
-    models::{WebDavDownloadResponse, WebDavListResponse},
+    models::{WebDavDownloadResponse, WebDavListResponse, WebDavUploadResponse},
 };
 
 #[derive(Clone)]
@@ -72,6 +72,30 @@ pub async fn download(
             password: webdav_config.password.as_deref(),
             root_path: &webdav_config.root_path,
             path,
+            local_path: Some(local_path),
+        },
+    )
+    .await
+}
+
+pub async fn upload(
+    app_config: &AppConfig,
+    webdav_config: &WebDavConfig,
+    remote_path: &str,
+    local_path: &Path,
+) -> ApiResult<WebDavUploadResponse> {
+    let local_path = local_path
+        .to_str()
+        .ok_or_else(|| ApiError::WebDav("invalid local export path".to_string()))?;
+    run(
+        app_config,
+        "upload",
+        RuntimePayload {
+            endpoint_url: &webdav_config.endpoint_url,
+            username: webdav_config.username.as_deref(),
+            password: webdav_config.password.as_deref(),
+            root_path: &webdav_config.root_path,
+            path: remote_path,
             local_path: Some(local_path),
         },
     )

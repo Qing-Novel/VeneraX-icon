@@ -392,6 +392,7 @@ fn build_import_plan(
         .unwrap_or_else(|| "backup.venera".to_string());
     let sources = read_source_files(&mut archive)?;
     let source_data_files = read_source_data_files(&mut archive)?;
+    let explicit_type_map = read_source_type_map(&mut archive)?;
     let domain_path = extract_database_entry(&mut archive, tmp_dir, "data/venera.db")?;
     let favorite_path = extract_database_entry(&mut archive, tmp_dir, "local_favorite.db")?;
     let history_path = extract_database_entry(&mut archive, tmp_dir, "history.db")?;
@@ -404,12 +405,17 @@ fn build_import_plan(
         .iter()
         .map(|source| source.key.clone())
         .collect::<HashSet<_>>();
-    let type_map = infer_type_map(
+    let mut type_map = infer_type_map(
         &domain,
         favorite_path.as_deref(),
         history_path.as_deref(),
         &source_keys,
     );
+    for (type_value, source_key) in explicit_type_map {
+        if source_keys.contains(&source_key) {
+            type_map.insert(type_value, source_key);
+        }
+    }
     let (favorites, favorite_folders, favorite_folder_items, favorites_skipped) =
         import_favorites(&domain, &type_map, favorite_path.as_deref())?;
     let (history, history_skipped) = import_history(&domain, &type_map, history_path.as_deref())?;
@@ -569,6 +575,29 @@ fn read_source_data_files(
     }
 
     Ok(files)
+}
+
+fn read_source_type_map(archive: &mut ZipArchive<File>) -> ApiResult<HashMap<i64, String>> {
+    let mut entry = match archive.by_name("source_type_map.json") {
+        Ok(entry) => entry,
+        Err(ZipError::FileNotFound) => return Ok(HashMap::new()),
+        Err(err) => return Err(zip_error(err)),
+    };
+    let mut text = String::new();
+    entry.read_to_string(&mut text)?;
+    let value: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|err| ApiError::ImportPreview(format!("invalid source_type_map.json: {err}")))?;
+    let Some(types) = value.get("types").and_then(|item| item.as_object()) else {
+        return Ok(HashMap::new());
+    };
+    Ok(types
+        .iter()
+        .filter_map(|(key, value)| {
+            let type_value = key.parse::<i64>().ok()?;
+            let source_key = value.as_str()?.to_string();
+            is_valid_source_key(&source_key).then_some((type_value, source_key))
+        })
+        .collect())
 }
 
 struct SourceMetadata {

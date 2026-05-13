@@ -1,3 +1,4 @@
+mod backup_export;
 mod config;
 mod db;
 mod error;

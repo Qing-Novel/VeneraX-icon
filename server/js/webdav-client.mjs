@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, basename } from 'node:path'
 
 const [action, payloadText] = process.argv.slice(2)
@@ -144,6 +144,36 @@ async function download(config) {
   }
 }
 
+async function upload(config) {
+  if (!config.local_path) {
+    throw new Error('missing local path')
+  }
+  const buffer = await readFile(config.local_path)
+  const url = buildUrl(config, config.path)
+  const response = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      ...authHeader(config),
+      'Content-Type': 'application/octet-stream'
+    },
+    body: buffer
+  })
+  if (!response.ok) {
+    throw new Error(`webdav upload returned ${response.status}`)
+  }
+
+  const remotePath = joinRemotePath(config.path).replace(/^\/+/, '')
+  return {
+    path: `webdav/${basename(config.local_path)}`,
+    file_name: basename(config.local_path),
+    local_path: config.local_path,
+    remote_path: remotePath,
+    size: buffer.byteLength,
+    uploaded: true,
+    content_type: response.headers.get('content-type')
+  }
+}
+
 try {
   if (!action || !payloadText) {
     throw new Error('missing webdav action or payload')
@@ -153,6 +183,8 @@ try {
     finish({ ok: true, data: await list(config) })
   } else if (action === 'download') {
     finish({ ok: true, data: await download(config) })
+  } else if (action === 'upload') {
+    finish({ ok: true, data: await upload(config) })
   } else {
     throw new Error(`unsupported webdav action: ${action}`)
   }

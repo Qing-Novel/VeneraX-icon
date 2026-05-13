@@ -56,6 +56,7 @@ import {
   type SourceSummary,
   type WebDavConfigResponse,
   type WebDavEntry,
+  type WebDavUploadResponse,
   applyImportBackup,
   getComicInfo,
   getComicPages,
@@ -82,6 +83,7 @@ import {
   setFavorite,
   updateSource,
   updateSourceSetting,
+  uploadWebDav,
   updateSettings
 } from './api'
 import { ReloadPrompt } from './ReloadPrompt'
@@ -737,7 +739,7 @@ function HomeView({
         <RefreshCw size={20} />
         <div>
           <strong>同步数据</strong>
-          <span>WebDAV 当前为只读下载，上传待功能稳定后启用</span>
+          <span>WebDAV 支持手动下载和备份上传，默认不自动上传</span>
         </div>
         <StatusPill ok={data.health?.status === 'ok' && !error} text={data.health?.status === 'ok' && !error ? '正常' : '异常'} />
       </section>
@@ -2446,6 +2448,7 @@ function WebDavPanel({ onImportComplete }: { onImportComplete: () => void | Prom
   const [backups, setBackups] = useState<ImportBackupSummary[]>([])
   const [preview, setPreview] = useState<ImportBackupPreviewResponse | null>(null)
   const [importResult, setImportResult] = useState<ImportBackupApplyResponse | null>(null)
+  const [uploadResult, setUploadResult] = useState<WebDavUploadResponse | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -2543,10 +2546,46 @@ function WebDavPanel({ onImportComplete }: { onImportComplete: () => void | Prom
     }
   }
 
+  const createLocalBackup = async () => {
+    setBusy(true)
+    setMessage(null)
+    setUploadResult(null)
+    try {
+      const result = await uploadWebDav(true)
+      setUploadResult(result)
+      setMessage(`已创建本地备份 ${result.file_name}`)
+      await loadBackups()
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : '本地备份创建失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const uploadBackup = async () => {
+    if (!config?.endpoint_url) {
+      setMessage('请先保存 WebDAV 配置')
+      return
+    }
+    setBusy(true)
+    setMessage(null)
+    setUploadResult(null)
+    try {
+      const result = await uploadWebDav(false)
+      setUploadResult(result)
+      setMessage(`已上传 ${result.remote_path}`)
+      await loadBackups()
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'WebDAV 上传失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const parentPath = currentPath.split('/').filter(Boolean).slice(0, -1).join('/')
 
   return (
-    <Panel title="WebDAV" action={config?.read_only ? '只读' : undefined}>
+    <Panel title="WebDAV" action={config?.endpoint_url ? '已配置' : undefined}>
       <form className="webdav-form" onSubmit={handleSave}>
         <input
           value={endpointUrl}
@@ -2569,6 +2608,21 @@ function WebDavPanel({ onImportComplete }: { onImportComplete: () => void | Prom
           浏览
         </button>
       </form>
+      <div className="webdav-actions">
+        <button className="icon-text-button subtle" type="button" disabled={busy} onClick={() => void createLocalBackup()}>
+          <Save size={16} />
+          创建本地备份
+        </button>
+        <button
+          className="icon-text-button subtle"
+          type="button"
+          disabled={busy || !config?.endpoint_url}
+          onClick={() => void uploadBackup()}
+        >
+          <Upload size={16} />
+          备份并上传
+        </button>
+      </div>
       {message ? <div className="data-row">{message}</div> : null}
       {entries.length > 0 || currentPath ? (
         <div className="webdav-list">
@@ -2639,6 +2693,12 @@ function WebDavPanel({ onImportComplete }: { onImportComplete: () => void | Prom
         <div className="import-result">
           源 {importResult.sources_imported}，收藏 {importResult.favorites_imported}，历史 {importResult.history_imported}
           ，跳过 {importResult.favorites_skipped + importResult.history_skipped}
+        </div>
+      ) : null}
+      {uploadResult ? (
+        <div className="import-result">
+          备份 {uploadResult.file_name}，{formatBytes(uploadResult.size)}，
+          {uploadResult.uploaded ? `已上传 ${uploadResult.remote_path}` : '仅创建本地文件'}
         </div>
       ) : null}
     </Panel>

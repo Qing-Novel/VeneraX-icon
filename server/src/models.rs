@@ -416,6 +416,22 @@ pub struct WebDavDownloadResponse {
     pub content_type: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub struct WebDavUploadRequest {
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct WebDavUploadResponse {
+    pub path: String,
+    pub file_name: String,
+    pub local_path: String,
+    pub remote_path: String,
+    pub size: u64,
+    pub uploaded: bool,
+    pub content_type: Option<String>,
+}
+
 #[derive(Serialize)]
 pub struct ImportBackupSummary {
     pub file_name: String,
