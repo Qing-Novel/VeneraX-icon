@@ -17,6 +17,7 @@ import {
   WifiOff
 } from 'lucide-react'
 import {
+  type ComicEpisode,
   type ComicInfo,
   type HealthResponse,
   type SearchComic,
@@ -309,6 +310,7 @@ function SearchView({
   const [selectedComic, setSelectedComic] = useState<ComicInfo | null>(null)
   const [comicMessage, setComicMessage] = useState<string | null>(null)
   const [images, setImages] = useState<string[]>([])
+  const [activeEpisodeTitle, setActiveEpisodeTitle] = useState<string | null>(null)
   const [loadingComic, setLoadingComic] = useState(false)
   const [loadingImages, setLoadingImages] = useState(false)
   const [sourceMessage, setSourceMessage] = useState<string | null>(null)
@@ -322,6 +324,7 @@ function SearchView({
     setSelectedComic(null)
     setComicMessage(null)
     setImages([])
+    setActiveEpisodeTitle(null)
     if (!nextSource) {
       setKeyword('')
     }
@@ -334,6 +337,7 @@ function SearchView({
     setSelectedComic(null)
     setComicMessage(null)
     setImages([])
+    setActiveEpisodeTitle(null)
   }
 
   const handleSearch = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -348,6 +352,7 @@ function SearchView({
       setResults(response.comics)
       setSelectedComic(null)
       setImages([])
+      setActiveEpisodeTitle(null)
       setSearchMessage(response.comics.length === 0 ? '没有结果' : null)
     } catch (err) {
       setResults([])
@@ -363,6 +368,7 @@ function SearchView({
     setLoadingComic(true)
     setComicMessage(null)
     setImages([])
+    setActiveEpisodeTitle(null)
     try {
       const response = await getComicInfo(selectedSource, comic.id)
       setSelectedComic(response.comic)
@@ -375,17 +381,19 @@ function SearchView({
     }
   }
 
-  const handleLoadImages = async (episodeId: string) => {
+  const handleLoadImages = async (episode: ComicEpisode) => {
     if (!selectedSource || !selectedComic) return
 
     setLoadingImages(true)
     setComicMessage(null)
     try {
-      const response = await getComicPages(selectedSource, selectedComic.id, episodeId)
+      const response = await getComicPages(selectedSource, selectedComic.id, episode.id)
       setImages(response.images)
+      setActiveEpisodeTitle(episode.title)
       setComicMessage(response.images.length === 0 ? '暂无图片' : null)
     } catch (err) {
       setImages([])
+      setActiveEpisodeTitle(null)
       setComicMessage(err instanceof Error ? err.message : '章节加载失败')
     } finally {
       setLoadingImages(false)
@@ -453,6 +461,7 @@ function SearchView({
         <ComicDetails
           comic={selectedComic}
           images={images}
+          activeEpisodeTitle={activeEpisodeTitle}
           loadingComic={loadingComic}
           loadingImages={loadingImages}
           message={comicMessage}
@@ -510,6 +519,7 @@ function SearchResults({
 function ComicDetails({
   comic,
   images,
+  activeEpisodeTitle,
   loadingComic,
   loadingImages,
   message,
@@ -517,10 +527,11 @@ function ComicDetails({
 }: {
   comic: ComicInfo | null
   images: string[]
+  activeEpisodeTitle: string | null
   loadingComic: boolean
   loadingImages: boolean
   message: string | null
-  onLoadImages: (episodeId: string) => void
+  onLoadImages: (episode: ComicEpisode) => void
 }) {
   if (loadingComic) {
     return <EmptyLine icon={Loader2} text="加载详情中" />
@@ -552,7 +563,7 @@ function ComicDetails({
             className="episode-button"
             type="button"
             disabled={loadingImages}
-            onClick={() => onLoadImages(episode.id)}
+            onClick={() => onLoadImages(episode)}
           >
             {episode.title}
           </button>
@@ -561,10 +572,21 @@ function ComicDetails({
       {message ? <EmptyLine icon={BookOpen} text={message} /> : null}
       {loadingImages ? <EmptyLine icon={Loader2} text="加载章节中" /> : null}
       {images.length > 0 ? (
-        <div className="image-preview-list">
-          {images.slice(0, 6).map((image) => (
-            <img key={image} src={imageProxyUrl(image)} alt="" loading="lazy" />
-          ))}
+        <div className="reader-shell">
+          <div className="reader-heading">
+            <strong>{activeEpisodeTitle ?? '当前章节'}</strong>
+            <span>{images.length} 张</span>
+          </div>
+          <div className="reader-image-list">
+            {images.map((image, index) => (
+              <img
+                key={`${image}-${index}`}
+                src={imageProxyUrl(image)}
+                alt={`第 ${index + 1} 页`}
+                loading={index < 2 ? 'eager' : 'lazy'}
+              />
+            ))}
+          </div>
         </div>
       ) : null}
     </div>

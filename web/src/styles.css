@@ -493,18 +493,40 @@ button {
   opacity: 0.6;
 }
 
-.image-preview-list {
+.reader-shell {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
-  gap: 8px;
+  gap: 10px;
 }
 
-.image-preview-list img {
-  width: 100%;
-  aspect-ratio: 3 / 4;
+.reader-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.reader-heading strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reader-image-list {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+}
+
+.reader-image-list img {
+  width: min(100%, 720px);
+  height: auto;
   border-radius: 6px;
-  object-fit: cover;
   background: var(--surface-soft);
+  box-shadow: 0 1px 8px color-mix(in srgb, var(--text) 8%, transparent);
 }
 
 .segmented-control {
