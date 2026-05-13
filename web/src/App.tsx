@@ -7,6 +7,7 @@ import {
   EyeOff,
   FolderOpen,
   Heart,
+  History,
   Home,
   Library,
   Loader2,
@@ -57,7 +58,15 @@ import {
 } from './api'
 import { ReloadPrompt } from './ReloadPrompt'
 
-type TabKey = 'home' | 'favorites' | 'explore' | 'categories' | 'search' | 'tasks' | 'settings'
+type TabKey =
+  | 'home'
+  | 'history'
+  | 'favorites'
+  | 'explore'
+  | 'categories'
+  | 'search'
+  | 'tasks'
+  | 'settings'
 
 type AppData = {
   health: HealthResponse | null
@@ -68,6 +77,7 @@ type AppData = {
 
 const primaryNav = [
   { key: 'home', label: '首页', icon: Home },
+  { key: 'history', label: '历史', icon: History },
   { key: 'favorites', label: '收藏', icon: Heart },
   { key: 'explore', label: '发现', icon: Compass },
   { key: 'categories', label: '分类', icon: Tags }
@@ -86,10 +96,30 @@ const emptyData: AppData = {
   library: { history_total: 0, favorites_total: 0, history: [], favorites: [] }
 }
 
+const libraryPageStep = 100
+
+function libraryItemKey(item: LibraryItem) {
+  return `${item.source_key}:${item.comic_id}:${item.episode_id ?? ''}`
+}
+
+function mergeLibraryItems(current: LibraryItem[], incoming: LibraryItem[]) {
+  const seen = new Set(current.map(libraryItemKey))
+  return [
+    ...current,
+    ...incoming.filter((item) => {
+      const key = libraryItemKey(item)
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+  ]
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabKey>('home')
   const [data, setData] = useState<AppData>(emptyData)
   const [loading, setLoading] = useState(true)
+  const [loadingMoreLibrary, setLoadingMoreLibrary] = useState<'history' | 'favorites' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<string | null>(null)
 
@@ -149,12 +179,67 @@ export default function App() {
 
   const saveHistory = async (payload: HistoryWriteRequest) => {
     const library = await recordHistory(payload)
-    setData((current) => ({ ...current, library }))
+    setData((current) => ({
+      ...current,
+      library: {
+        ...library,
+        history: mergeLibraryItems(library.history, current.library.history),
+        favorites:
+          current.library.favorites.length > library.favorites.length
+            ? current.library.favorites
+            : library.favorites
+      }
+    }))
   }
 
   const saveFavorite = async (payload: FavoriteWriteRequest) => {
     const library = await setFavorite(payload)
-    setData((current) => ({ ...current, library }))
+    setData((current) => ({
+      ...current,
+      library: {
+        ...library,
+        history:
+          current.library.history.length > library.history.length
+            ? current.library.history
+            : library.history,
+        favorites: payload.favorite
+          ? mergeLibraryItems(library.favorites, current.library.favorites)
+          : current.library.favorites.filter(
+              (item) => item.source_key !== payload.source_key || item.comic_id !== payload.comic_id
+            )
+      }
+    }))
+  }
+
+  const loadMoreLibrary = async (kind: 'history' | 'favorites') => {
+    setLoadingMoreLibrary(kind)
+    setError(null)
+    try {
+      const library = await getLibrary({
+        history_limit: kind === 'history' ? libraryPageStep : 0,
+        history_offset: kind === 'history' ? data.library.history.length : 0,
+        favorites_limit: kind === 'favorites' ? libraryPageStep : 0,
+        favorites_offset: kind === 'favorites' ? data.library.favorites.length : 0
+      })
+      setData((current) => ({
+        ...current,
+        library: {
+          ...library,
+          history:
+            kind === 'history'
+              ? mergeLibraryItems(current.library.history, library.history)
+              : current.library.history,
+          favorites:
+            kind === 'favorites'
+              ? mergeLibraryItems(current.library.favorites, library.favorites)
+              : current.library.favorites
+        }
+      }))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '资料库加载失败')
+    } finally {
+      setLoadingMoreLibrary(null)
+    }
   }
 
   return (
@@ -172,6 +257,22 @@ export default function App() {
           {activeTab === 'home' ? (
             <HomeView data={data} error={error} onRecordHistory={saveHistory} />
           ) : null}
+          {activeTab === 'history' ? (
+            <LibraryView
+              title="历史记录"
+              icon={History}
+              items={data.library.history}
+              total={data.library.history_total}
+              emptyText="暂无阅读记录"
+              loadingMore={loadingMoreLibrary === 'history'}
+              onLoadMore={
+                data.library.history.length < data.library.history_total
+                  ? () => loadMoreLibrary('history')
+                  : undefined
+              }
+              onRecordHistory={saveHistory}
+            />
+          ) : null}
           {activeTab === 'favorites' ? (
             <LibraryView
               title="收藏"
@@ -179,6 +280,12 @@ export default function App() {
               items={data.library.favorites}
               total={data.library.favorites_total}
               emptyText="暂无收藏"
+              loadingMore={loadingMoreLibrary === 'favorites'}
+              onLoadMore={
+                data.library.favorites.length < data.library.favorites_total
+                  ? () => loadMoreLibrary('favorites')
+                  : undefined
+              }
               onRecordHistory={saveHistory}
             />
           ) : null}
@@ -729,6 +836,8 @@ function LibraryView({
   items,
   total,
   emptyText,
+  loadingMore = false,
+  onLoadMore,
   onRecordHistory
 }: {
   title: string
@@ -736,6 +845,8 @@ function LibraryView({
   items: LibraryItem[]
   total: number
   emptyText: string
+  loadingMore?: boolean
+  onLoadMore?: () => void
   onRecordHistory: (payload: HistoryWriteRequest) => Promise<void>
 }) {
   const [selectedItem, setSelectedItem] = useState<LibraryItem | null>(null)
@@ -744,6 +855,17 @@ function LibraryView({
     <div className="view-stack">
       <Panel title={title} action={String(total)}>
         <LibraryList items={items} emptyText={emptyText} icon={Icon} onSelect={setSelectedItem} />
+        {onLoadMore ? (
+          <button
+            className="icon-text-button subtle library-more-button"
+            type="button"
+            disabled={loadingMore}
+            onClick={onLoadMore}
+          >
+            {loadingMore ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+            {loadingMore ? '加载中' : `加载更多 (${items.length}/${total})`}
+          </button>
+        ) : null}
       </Panel>
       {selectedItem ? (
         <Panel title="漫画详情">

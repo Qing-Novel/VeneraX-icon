@@ -172,6 +172,14 @@ pub struct LibraryResponse {
     pub favorites: Vec<LibraryItem>,
 }
 
+#[derive(Default, Deserialize)]
+pub struct LibraryQuery {
+    pub history_limit: Option<u32>,
+    pub history_offset: Option<u32>,
+    pub favorites_limit: Option<u32>,
+    pub favorites_offset: Option<u32>,
+}
+
 #[derive(Deserialize)]
 pub struct HistoryWriteRequest {
     pub source_key: String,

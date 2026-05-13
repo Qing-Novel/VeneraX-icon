@@ -106,6 +106,13 @@ export type LibraryResponse = {
   favorites: LibraryItem[]
 }
 
+export type LibraryQuery = {
+  history_limit?: number
+  history_offset?: number
+  favorites_limit?: number
+  favorites_offset?: number
+}
+
 export type HistoryWriteRequest = {
   source_key: string
   comic_id: string
@@ -249,8 +256,13 @@ export function updateSettings(values: Record<string, unknown>) {
   })
 }
 
-export function getLibrary() {
-  return request<LibraryResponse>('/api/library')
+export function getLibrary(query?: LibraryQuery) {
+  const params = new URLSearchParams()
+  Object.entries(query ?? {}).forEach(([key, value]) => {
+    if (value != null) params.set(key, String(value))
+  })
+  const suffix = params.toString()
+  return request<LibraryResponse>(`/api/library${suffix ? `?${suffix}` : ''}`)
 }
 
 export function recordHistory(payload: HistoryWriteRequest) {

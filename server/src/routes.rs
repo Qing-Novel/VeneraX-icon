@@ -24,7 +24,7 @@ use crate::{
         ComicPagesResponse, DeleteResponse, FavoriteWriteRequest, HealthResponse,
         HistoryWriteRequest, ImageProxyQuery, ImportBackupApplyRequest, ImportBackupApplyResponse,
         ImportBackupPreviewRequest, ImportBackupPreviewResponse, ImportBackupsResponse,
-        LibraryItem, LibraryResponse, SearchRequest, SearchResponse, SettingsPatch,
+        LibraryItem, LibraryQuery, LibraryResponse, SearchRequest, SearchResponse, SettingsPatch,
         SettingsResponse, SourceSummary, SourceWriteRequest, WebDavConfigRequest,
         WebDavConfigResponse, WebDavDownloadRequest, WebDavDownloadResponse, WebDavListRequest,
         WebDavListResponse,
@@ -158,8 +158,11 @@ async fn update_settings(
     get_settings(State(state)).await
 }
 
-async fn get_library(State(state): State<AppState>) -> ApiResult<Json<LibraryResponse>> {
-    Ok(Json(read_library(&state)?))
+async fn get_library(
+    State(state): State<AppState>,
+    Query(query): Query<LibraryQuery>,
+) -> ApiResult<Json<LibraryResponse>> {
+    Ok(Json(read_library(&state, query)?))
 }
 
 async fn upsert_history(
@@ -204,7 +207,7 @@ async fn upsert_history(
         )?;
     }
 
-    Ok(Json(read_library(&state)?))
+    Ok(Json(read_library(&state, LibraryQuery::default())?))
 }
 
 async fn set_favorite(
@@ -249,7 +252,7 @@ async fn set_favorite(
         }
     }
 
-    Ok(Json(read_library(&state)?))
+    Ok(Json(read_library(&state, LibraryQuery::default())?))
 }
 
 async fn get_webdav_config(State(state): State<AppState>) -> ApiResult<Json<WebDavConfigResponse>> {
@@ -642,7 +645,38 @@ async fn delete_source(
     Ok(Json(DeleteResponse { deleted: true }))
 }
 
-fn read_library(state: &AppState) -> ApiResult<LibraryResponse> {
+const DEFAULT_HISTORY_LIMIT: u32 = 20;
+const DEFAULT_FAVORITES_LIMIT: u32 = 50;
+const MAX_LIBRARY_LIMIT: u32 = 200;
+
+struct LibraryWindow {
+    history_limit: u32,
+    history_offset: u32,
+    favorites_limit: u32,
+    favorites_offset: u32,
+}
+
+impl From<LibraryQuery> for LibraryWindow {
+    fn from(query: LibraryQuery) -> Self {
+        Self {
+            history_limit: normalize_limit(query.history_limit, DEFAULT_HISTORY_LIMIT),
+            history_offset: query.history_offset.unwrap_or(0),
+            favorites_limit: normalize_limit(query.favorites_limit, DEFAULT_FAVORITES_LIMIT),
+            favorites_offset: query.favorites_offset.unwrap_or(0),
+        }
+    }
+}
+
+fn normalize_limit(value: Option<u32>, default: u32) -> u32 {
+    match value {
+        Some(0) => 0,
+        Some(limit) => limit.clamp(1, MAX_LIBRARY_LIMIT),
+        None => default,
+    }
+}
+
+fn read_library(state: &AppState, query: LibraryQuery) -> ApiResult<LibraryResponse> {
+    let window = LibraryWindow::from(query);
     let database = state
         .database
         .lock()
@@ -654,21 +688,27 @@ fn read_library(state: &AppState) -> ApiResult<LibraryResponse> {
             SELECT source_key, comic_id, title, subtitle, cover, episode_id, episode_title, updated_at
             FROM reading_history
             ORDER BY updated_at DESC
-            LIMIT 20
+            LIMIT ?1 OFFSET ?2
             "#,
         )?;
-        let rows = statement.query_map([], |row| {
-            Ok(LibraryItem {
-                source_key: row.get(0)?,
-                comic_id: row.get(1)?,
-                title: row.get(2)?,
-                subtitle: row.get(3)?,
-                cover: row.get(4)?,
-                episode_id: row.get(5)?,
-                episode_title: row.get(6)?,
-                updated_at: row.get(7)?,
-            })
-        })?;
+        let rows = statement.query_map(
+            params![
+                i64::from(window.history_limit),
+                i64::from(window.history_offset)
+            ],
+            |row| {
+                Ok(LibraryItem {
+                    source_key: row.get(0)?,
+                    comic_id: row.get(1)?,
+                    title: row.get(2)?,
+                    subtitle: row.get(3)?,
+                    cover: row.get(4)?,
+                    episode_id: row.get(5)?,
+                    episode_title: row.get(6)?,
+                    updated_at: row.get(7)?,
+                })
+            },
+        )?;
         rows.collect::<Result<Vec<_>, _>>()?
     };
     let history_total = database.query_row("SELECT COUNT(*) FROM reading_history", [], |row| {
@@ -681,21 +721,27 @@ fn read_library(state: &AppState) -> ApiResult<LibraryResponse> {
             SELECT source_key, comic_id, title, subtitle, cover, created_at
             FROM favorites
             ORDER BY created_at DESC
-            LIMIT 50
+            LIMIT ?1 OFFSET ?2
             "#,
         )?;
-        let rows = statement.query_map([], |row| {
-            Ok(LibraryItem {
-                source_key: row.get(0)?,
-                comic_id: row.get(1)?,
-                title: row.get(2)?,
-                subtitle: row.get(3)?,
-                cover: row.get(4)?,
-                episode_id: None,
-                episode_title: None,
-                updated_at: row.get(5)?,
-            })
-        })?;
+        let rows = statement.query_map(
+            params![
+                i64::from(window.favorites_limit),
+                i64::from(window.favorites_offset)
+            ],
+            |row| {
+                Ok(LibraryItem {
+                    source_key: row.get(0)?,
+                    comic_id: row.get(1)?,
+                    title: row.get(2)?,
+                    subtitle: row.get(3)?,
+                    cover: row.get(4)?,
+                    episode_id: None,
+                    episode_title: None,
+                    updated_at: row.get(5)?,
+                })
+            },
+        )?;
         rows.collect::<Result<Vec<_>, _>>()?
     };
     let favorites_total = database.query_row("SELECT COUNT(*) FROM favorites", [], |row| {

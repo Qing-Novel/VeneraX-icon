@@ -261,6 +261,15 @@ button {
   background: var(--primary-soft);
 }
 
+.icon-text-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
+.library-more-button {
+  width: 100%;
+}
+
 .icon-button.danger {
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 12%, transparent);
