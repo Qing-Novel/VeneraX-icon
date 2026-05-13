@@ -17,10 +17,8 @@ import {
   Home,
   Library,
   Loader2,
-  MessageCircle,
   MoreHorizontal,
   Play,
-  Share2,
   Trash2,
   Upload,
   RefreshCw,
@@ -212,6 +210,91 @@ function delay(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
 }
 
+type ComicMetaRow = {
+  label: string
+  value: string
+  tone: 'blue' | 'cyan' | 'pink' | 'green' | 'orange' | 'purple'
+}
+
+type SettingsSectionKey = 'appearance' | 'reading' | 'explore' | 'network' | 'webdav' | 'about' | 'hidden'
+
+function cleanText(value: unknown) {
+  if (typeof value !== 'string' && typeof value !== 'number') return null
+  const text = String(value).replace(/\s+/g, ' ').trim()
+  return text.length > 0 ? text : null
+}
+
+function rawRecord(value: unknown): Record<string, unknown> | null {
+  return value != null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function rawText(raw: unknown, keys: string[]) {
+  const record = rawRecord(raw)
+  if (!record) return null
+  for (const key of keys) {
+    const value = cleanText(record[key])
+    if (value) return value
+  }
+  return null
+}
+
+function parseAppDate(value: string | null) {
+  if (!value) return null
+  const normalized = /^\d{4}-\d{2}-\d{2} /.test(value) ? value.replace(' ', 'T') : value
+  const date = new Date(normalized)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function formatDateOnly(value: string | null) {
+  const date = parseAppDate(value)
+  if (!date) return null
+  return date.toLocaleDateString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  })
+}
+
+function firstPresent(values: Array<string | null | undefined>) {
+  return values.find((value) => value != null && value.trim().length > 0) ?? null
+}
+
+function libraryItemMetaRows(item: LibraryItem): ComicMetaRow[] {
+  return [
+    { label: 'Source', value: item.source_key, tone: 'cyan' },
+    { label: 'Authors', value: item.subtitle ?? '', tone: 'blue' },
+    { label: 'Progress', value: item.episode_title ?? '', tone: 'green' },
+    { label: 'Update', value: formatDateOnly(item.updated_at) ?? '', tone: 'orange' }
+  ].filter((row) => row.value.trim().length > 0) as ComicMetaRow[]
+}
+
+function searchComicMetaRows(comic: SearchComic): ComicMetaRow[] {
+  return [
+    { label: 'Authors', value: comic.subtitle ?? '', tone: 'blue' },
+    { label: 'Tags', value: comic.tags.slice(0, 3).join(', '), tone: 'pink' }
+  ].filter((row) => row.value.trim().length > 0) as ComicMetaRow[]
+}
+
+function comicInfoRows(comic: ComicInfo, sourceKey: string, progressText?: string | null): ComicMetaRow[] {
+  const update = firstPresent([
+    rawText(comic.raw, ['updateTime', 'update_time', 'lastUpdate', 'last_update']),
+    rawText(comic.raw, ['uploadTime', 'upload_time'])
+  ])
+  const pages = rawText(comic.raw, ['maxPage', 'pages', 'pageCount'])
+  const status = rawText(comic.raw, ['status', 'state'])
+  return [
+    { label: 'Authors', value: firstPresent([comic.subtitle, rawText(comic.raw, ['author', 'uploader', 'artist'])]) ?? '', tone: 'blue' },
+    { label: 'Update', value: update ?? '', tone: 'cyan' },
+    { label: 'Source', value: sourceKey, tone: 'cyan' },
+    { label: 'Tags', value: comic.tags.slice(0, 4).join(', '), tone: 'pink' },
+    { label: 'Status', value: status ?? '', tone: 'purple' },
+    { label: 'Progress', value: progressText ?? '', tone: 'green' },
+    { label: 'Pages', value: pages ?? '', tone: 'orange' }
+  ].filter((row) => row.value.trim().length > 0) as ComicMetaRow[]
+}
+
 function libraryItemKey(item: LibraryItem) {
   return `${item.source_key}:${item.comic_id}:${item.episode_id ?? ''}`
 }
@@ -267,6 +350,8 @@ function readerModeClassName(mode: ReaderMode) {
   return `reader-mode-continuous-horizontal${direction}`
 }
 
+type SearchPreset = { sourceKey: string; keyword: string } | null
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabKey>('home')
   const [activePrimaryTab, setActivePrimaryTab] = useState<PrimaryTabKey>('home')
@@ -279,6 +364,7 @@ export default function App() {
   const [loadingFollowUpdates, setLoadingFollowUpdates] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<string | null>(null)
+  const [searchPreset, setSearchPreset] = useState<SearchPreset>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -624,6 +710,12 @@ export default function App() {
               onBack={() => setRoute({ kind: 'main' })}
               onOpenReader={openReader}
               onSetFavorite={saveFavorite}
+              onSearchTag={(sourceKey, tag) => {
+                setSearchPreset({ sourceKey, keyword: tag })
+                setActiveTab('search')
+                setActivePrimaryTab('search' as PrimaryTabKey)
+                setRoute({ kind: 'main' })
+              }}
             />
           ) : null}
           {route.kind === 'main' && activeTab === 'home' ? (
@@ -709,6 +801,8 @@ export default function App() {
               onSourceDelete={removeSource}
               onSourceToggle={toggleSource}
               onOpenComic={openDetail}
+              preset={searchPreset}
+              onConsumePreset={() => setSearchPreset(null)}
             />
           ) : null}
           {route.kind === 'main' && activeTab === 'tasks' ? (
@@ -719,6 +813,7 @@ export default function App() {
               settings={data.settings}
               themeMode={themeMode}
               readerMode={readerMode}
+              sources={data.sources}
               onBack={closeStandalonePage}
               onThemeChange={setThemeMode}
               onReaderModeChange={setReaderMode}
@@ -869,13 +964,18 @@ function HomeView({
 }) {
   return (
     <div className="view-stack">
-      <section className="search-strip" aria-label="搜索">
+      <button
+        className="search-strip app-page-search"
+        aria-label="搜索"
+        type="button"
+        onClick={() => onOpenTab('search')}
+      >
         <Search size={20} />
-        <input placeholder="搜索漫画" disabled />
-        <button className="primary-button" disabled>
+        <span style={{ color: 'var(--muted)', textAlign: 'left', flex: 1 }}>搜索漫画</span>
+        <span className="primary-button" style={{ pointerEvents: 'none' }}>
           搜索
-        </button>
-      </section>
+        </span>
+      </button>
 
       {error ? (
         <section className="notice error">
@@ -906,11 +1006,6 @@ function HomeView({
             onSelect={(item) => onOpenComic(libraryItemToOpenRequest(item))}
           />
         </HomeCard>
-        <HomeCard title="本地" count={0} icon={FolderOpen} onOpen={() => undefined}>
-          <div className="home-card-empty">
-            <EmptyLine icon={FolderOpen} text="Web 端暂未接入本地导入" />
-          </div>
-        </HomeCard>
         <HomeCard
           title="追更"
           count={data.followUpdates.updated_total}
@@ -935,11 +1030,6 @@ function HomeView({
           onOpen={() => onOpenTab('search')}
         >
           <SourceChips sources={data.sources.slice(0, 12)} />
-        </HomeCard>
-        <HomeCard title="图片收藏" count={0} icon={Bookmark} onOpen={() => undefined}>
-          <div className="home-card-empty">
-            <EmptyLine icon={Bookmark} text="暂无图片收藏数据" />
-          </div>
         </HomeCard>
       </section>
     </div>
@@ -1080,24 +1170,32 @@ function ComicDetailPage({
   favorites,
   onBack,
   onOpenReader,
-  onSetFavorite
+  onSetFavorite,
+  onSearchTag
 }: {
   request: ComicOpenRequest
   favorites: LibraryItem[]
   onBack: () => void
   onOpenReader: (request: ReaderOpenRequest) => void
   onSetFavorite: (payload: FavoriteWriteRequest) => Promise<void>
+  onSearchTag?: (sourceKey: string, tag: string) => void
 }) {
   const [comic, setComic] = useState<ComicInfo | null>(request.initialComic ?? null)
   const [loading, setLoading] = useState(!request.initialComic)
   const [message, setMessage] = useState<string | null>(null)
   const [favoriteBusy, setFavoriteBusy] = useState(false)
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false)
+  const [chaptersReversed, setChaptersReversed] = useState(false)
+  const [readingProgress, setReadingProgress] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
     setComic(request.initialComic ?? null)
     setLoading(!request.initialComic)
     setMessage(null)
+    setDescriptionExpanded(false)
+    setChaptersReversed(false)
+    setReadingProgress(null)
     if (request.initialComic) return
     void getComicInfo(request.sourceKey, request.comicId)
       .then((response) => {
@@ -1116,10 +1214,24 @@ function ComicDetailPage({
     }
   }, [request.comicId, request.initialComic, request.sourceKey])
 
+  useEffect(() => {
+    if (!comic) return
+    const item = favorites.find(
+      (fav) => fav.source_key === request.sourceKey && fav.comic_id === comic.id
+    )
+    setReadingProgress(item?.episode_title ?? null)
+  }, [favorites, comic, request.sourceKey])
+
   const isFavorite = Boolean(
     comic && favorites.some((item) => item.source_key === request.sourceKey && item.comic_id === comic.id)
   )
   const firstEpisode = comic?.episodes[0]
+  const detailRows = comic ? comicInfoRows(comic, request.sourceKey, readingProgress) : []
+  const orderedEpisodes = comic
+    ? chaptersReversed
+      ? [...comic.episodes].reverse()
+      : comic.episodes
+    : []
 
   const toggleFavorite = async () => {
     if (!comic || favoriteBusy) return
@@ -1140,21 +1252,38 @@ function ComicDetailPage({
     }
   }
 
+  const handleTagClick = (tag: string) => {
+    onSearchTag?.(request.sourceKey, tag)
+  }
+
   const openEpisode = (episode: ComicEpisode) => {
     if (!comic) return
     onOpenReader({ sourceKey: request.sourceKey, comic, episode })
   }
+
+  const tags = comic?.tags ?? []
+  const tagChips = tags.length > 0 ? (
+    <div className="metadata-chips">
+      {tags.map((tag) => (
+        <span
+          key={tag}
+          role="button"
+          tabIndex={0}
+          onClick={() => handleTagClick(tag)}
+          onKeyDown={(e) => { if (e.key === 'Enter') handleTagClick(tag) }}
+          style={{ cursor: 'pointer' }}
+        >
+          {tag}
+        </span>
+      ))}
+    </div>
+  ) : null
 
   return (
     <article className="comic-detail-page">
       <PageHeader
         title={comic?.title ?? request.title}
         onBack={onBack}
-        actions={
-          <button className="top-action-button" type="button" aria-label="更多" title="更多">
-            <MoreHorizontal size={20} />
-          </button>
-        }
       />
       {loading ? <EmptyLine icon={Loader2} text="加载详情中" /> : null}
       {!loading && !comic ? <EmptyLine icon={BookOpen} text={message ?? '详情加载失败'} /> : null}
@@ -1165,13 +1294,8 @@ function ComicDetailPage({
             <div className="detail-hero-main">
               <h2>{comic.title}</h2>
               {comic.subtitle ? <p>{comic.subtitle}</p> : null}
-              <div className="metadata-chips">
-                <span>{request.sourceKey}</span>
-                <span>{comic.episodes.length} 章</span>
-                {comic.tags.slice(0, 3).map((tag) => (
-                  <span key={tag}>{tag}</span>
-                ))}
-              </div>
+              {tagChips}
+              <ComicMetaRows rows={detailRows} />
             </div>
           </section>
           <section className="detail-action-row" aria-label="漫画操作">
@@ -1190,33 +1314,57 @@ function ComicDetailPage({
               <Heart size={18} fill={isFavorite ? 'currentColor' : 'none'} />
               <span>{isFavorite ? '已收藏' : '收藏'}</span>
             </button>
-            <button className="detail-action" type="button" disabled>
-              <Download size={18} />
-              <span>下载</span>
-            </button>
-            <button className="detail-action" type="button" disabled>
-              <MessageCircle size={18} />
-              <span>评论</span>
-            </button>
-            <button className="detail-action" type="button" disabled>
-              <Share2 size={18} />
-              <span>分享</span>
+            <button
+              className="detail-action"
+              type="button"
+              onClick={() => {
+                const desc = comic.description ? `${comic.title}\n${comic.subtitle ?? ''}\n${comic.description}` : `${comic.title}\n${comic.subtitle ?? ''}`
+                navigator.clipboard?.writeText(desc).catch(() => {})
+              }}
+            >
+              <Save size={18} />
+              <span>复制</span>
             </button>
           </section>
           {message ? <EmptyLine icon={BookOpen} text={message} /> : null}
           {comic.description ? (
             <section className="detail-section">
-              <h3>简介</h3>
-              <p>{comic.description}</p>
+              <div className="detail-section-header">
+                <h3>简介</h3>
+              </div>
+              <p className={descriptionExpanded ? 'detail-description expanded' : 'detail-description'}>
+                {comic.description}
+              </p>
+              {(comic.description.length > 80) ? (
+                <button
+                  className="detail-expand-button"
+                  type="button"
+                  onClick={() => setDescriptionExpanded((value) => !value)}
+                >
+                  <ChevronDown className={descriptionExpanded ? 'rotated' : ''} size={18} />
+                  <span>{descriptionExpanded ? '收起' : '展开'}</span>
+                </button>
+              ) : null}
             </section>
           ) : null}
           <section className="detail-section">
-            <h3>章节</h3>
+            <div className="detail-section-header">
+              <h3>章节</h3>
+              <button
+                className="icon-button"
+                type="button"
+                aria-label="章节排序"
+                title="章节排序"
+                onClick={() => setChaptersReversed((value) => !value)}
+              >
+                <ChevronDown className={chaptersReversed ? 'rotated' : ''} size={18} />
+              </button>
+            </div>
             {comic.episodes.length === 0 ? (
               <EmptyLine icon={BookOpen} text="暂无章节" />
             ) : (
               <div className="chapter-grid">
-                {comic.episodes.map((episode) => (
+                {orderedEpisodes.map((episode) => (
                   <button key={episode.id} className="chapter-cell" type="button" onClick={() => openEpisode(episode)}>
                     {episode.title}
                   </button>
@@ -1247,18 +1395,21 @@ function ReaderPage({
   const [pageIndex, setPageIndex] = useState(0)
   const [chromeOpen, setChromeOpen] = useState(true)
   const isGalleryMode = readerMode.startsWith('gallery')
+  const isRTL = readerMode.endsWith('RightToLeft')
   const activePageIndex = images.length === 0 ? 0 : Math.min(pageIndex, images.length - 1)
   const visibleImages = isGalleryMode ? images.slice(activePageIndex, activePageIndex + 1) : images
 
-  useEffect(() => {
-    let cancelled = false
+  const currentEpIndex = request.comic.episodes.findIndex((ep) => ep.id === request.episode.id)
+  const prevEpisode = currentEpIndex > 0 ? request.comic.episodes[currentEpIndex - 1] : null
+  const nextEpisode = currentEpIndex < request.comic.episodes.length - 1 ? request.comic.episodes[currentEpIndex + 1] : null
+
+  const loadEpisode = useCallback((episode: ComicEpisode) => {
     setLoading(true)
     setMessage(null)
     setImages([])
     setPageIndex(0)
-    void getComicPages(request.sourceKey, request.comic.id, request.episode.id)
+    void getComicPages(request.sourceKey, request.comic.id, episode.id)
       .then(async (response) => {
-        if (cancelled) return
         setImages(response.images)
         setMessage(response.images.length === 0 ? '暂无图片' : null)
         if (response.images.length > 0) {
@@ -1268,23 +1419,43 @@ function ReaderPage({
             title: request.comic.title,
             subtitle: request.comic.subtitle,
             cover: request.comic.cover,
-            episode_id: request.episode.id,
-            episode_title: request.episode.title
+            episode_id: episode.id,
+            episode_title: episode.title
           })
         }
       })
       .catch((err) => {
-        if (!cancelled) setMessage(err instanceof Error ? err.message : '章节加载失败')
+        setMessage(err instanceof Error ? err.message : '章节加载失败')
       })
       .finally(() => {
-        if (!cancelled) setLoading(false)
+        setLoading(false)
       })
-    return () => {
-      cancelled = true
+  }, [onRecordHistory, request.comic, request.sourceKey])
+
+  useEffect(() => {
+    loadEpisode(request.episode)
+  }, [request.episode.id, loadEpisode])
+
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onBack()
+        return
+      }
+      if (!isGalleryMode || images.length === 0) return
+      if (event.key === 'ArrowLeft') {
+        setPageIndex((current) => isRTL ? Math.min(images.length - 1, current + 1) : Math.max(0, current - 1))
+      } else if (event.key === 'ArrowRight') {
+        setPageIndex((current) => isRTL ? Math.max(0, current - 1) : Math.min(images.length - 1, current + 1))
+      }
     }
-  }, [onRecordHistory, request.comic, request.episode, request.sourceKey])
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [isGalleryMode, isRTL, images.length, onBack])
 
   const readerModeLabel = readerModeOptions.find((option) => option.key === readerMode)?.label
+  const goToPrev = () => { if (prevEpisode) loadEpisode(prevEpisode) }
+  const goToNext = () => { if (nextEpisode) loadEpisode(nextEpisode) }
 
   return (
     <main className={`reader-page ${readerModeClassName(readerMode)}`} tabIndex={0}>
@@ -1312,9 +1483,18 @@ function ReaderPage({
           <strong>{request.comic.title}</strong>
           <span>{request.episode.title}</span>
         </div>
-        <button className="icon-button" type="button" aria-label="更多">
-          <MoreHorizontal size={20} />
-        </button>
+        <div style={{ display: 'flex', gap: '4px' }}>
+          {prevEpisode ? (
+            <button className="icon-button" type="button" aria-label="上一章" title={prevEpisode.title} onClick={goToPrev}>
+              <ChevronLeft size={20} />
+            </button>
+          ) : null}
+          {nextEpisode ? (
+            <button className="icon-button" type="button" aria-label="下一章" title={nextEpisode.title} onClick={goToNext}>
+              <ChevronRight size={20} />
+            </button>
+          ) : null}
+        </div>
       </header>
       <footer className={chromeOpen ? 'reader-bottom open' : 'reader-bottom'}>
         <button
@@ -1342,13 +1522,33 @@ function ReaderPage({
   )
 }
 
+const SEARCH_HISTORY_KEY = 'venera_search_history'
+const MAX_SEARCH_HISTORY = 50
+
+function loadSearchHistory(): string[] {
+  try {
+    const raw = localStorage.getItem(SEARCH_HISTORY_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed.filter((v) => typeof v === 'string' && v.trim()) : []
+  } catch {
+    return []
+  }
+}
+
+function saveSearchHistory(history: string[]) {
+  localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(history.slice(0, MAX_SEARCH_HISTORY)))
+}
+
 function SearchView({
   sources,
   onBack,
   onSourceUpload,
   onSourceDelete,
   onSourceToggle,
-  onOpenComic
+  onOpenComic,
+  preset,
+  onConsumePreset
 }: {
   sources: SourceSummary[]
   onBack: () => void
@@ -1356,12 +1556,20 @@ function SearchView({
   onSourceDelete: (key: string) => Promise<void>
   onSourceToggle: (key: string, enabled: boolean) => Promise<void>
   onOpenComic: (request: ComicOpenRequest) => void
+  preset: SearchPreset
+  onConsumePreset?: () => void
 }) {
   const [keyword, setKeyword] = useState('')
   const [selectedSource, setSelectedSource] = useState('')
+  const [aggregatedSearch, setAggregatedSearch] = useState(false)
   const [searching, setSearching] = useState(false)
   const [searchMessage, setSearchMessage] = useState<string | null>(null)
   const [results, setResults] = useState<SearchComic[]>([])
+  const [resultSource, setResultSource] = useState('')
+  const [resultPage, setResultPage] = useState(1)
+  const [resultMaxPage, setResultMaxPage] = useState<number | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [searchHistory, setSearchHistory] = useState<string[]>(() => loadSearchHistory())
   const [sourceMessage, setSourceMessage] = useState<string | null>(null)
   const enabledSources = useMemo(
     () => sources.filter((source) => source.enabled && source.runtime_status === 'registered'),
@@ -1379,29 +1587,129 @@ function SearchView({
     }
   }, [enabledSources, selectedSource])
 
-  const handleSourceChange = (value: string) => {
-    setSelectedSource(value)
+  const presetRef = useRef(preset)
+  presetRef.current = preset
+
+  useEffect(() => {
+    const current = presetRef.current
+    if (!current) return
+    if (!enabledSources.some((source) => source.key === current.sourceKey)) return
+
+    setSelectedSource(current.sourceKey)
+    setAggregatedSearch(false)
+    setKeyword(current.keyword)
     setResults([])
     setSearchMessage(null)
+    setResultPage(1)
+    setResultMaxPage(null)
+    onConsumePreset?.()
+
+    void (async () => {
+      setSearching(true)
+      try {
+        const response = await searchComics(current.sourceKey, current.keyword, 1)
+        setResults(response.comics)
+        setResultSource(current.sourceKey)
+        addToHistory(current.keyword)
+        setSearchMessage(response.comics.length === 0 ? '没有结果' : null)
+      } catch (err) {
+        setSearchMessage(err instanceof Error ? err.message : '搜索失败')
+      } finally {
+        setSearching(false)
+      }
+    })()
+    // Only run when preset changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preset])
+
+  const handleSourceChange = (key: string) => {
+    setSelectedSource(key)
+    setAggregatedSearch(false)
+    setResults([])
+    setSearchMessage(null)
+    setResultPage(1)
+    setResultMaxPage(null)
   }
 
-  const handleSearch = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const value = keyword.trim()
-    if (!value || !selectedSource) return
+  const doSearch = async (text: string, sourceKey: string, page: number) => {
+    if (aggregatedSearch) {
+      const allResults: SearchComic[] = []
+      for (const source of enabledSources) {
+        try {
+          const response = await searchComics(source.key, text, page)
+          allResults.push(...response.comics)
+        } catch {
+          // skip failed sources in aggregated mode
+        }
+      }
+      return { comics: allResults, max_page: null, next: null }
+    }
+    return searchComics(sourceKey, text, page)
+  }
 
-    setSearching(true)
+  const addToHistory = (text: string) => {
+    setSearchHistory((prev) => {
+      const next = [text, ...prev.filter((item) => item !== text)]
+      saveSearchHistory(next)
+      return next
+    })
+  }
+
+  const removeFromHistory = (text: string) => {
+    setSearchHistory((prev) => {
+      const next = prev.filter((item) => item !== text)
+      saveSearchHistory(next)
+      return next
+    })
+  }
+
+  const handleSearch = async (text?: string, page = 1) => {
+    const value = (text ?? keyword).trim()
+    if (!value || (!aggregatedSearch && !selectedSource)) return
+    if (enabledSources.length === 0) return
+
+    const sourceKey = aggregatedSearch ? enabledSources[0].key : selectedSource
+
+    if (page === 1) {
+      setSearching(true)
+    } else {
+      setLoadingMore(true)
+    }
     setSearchMessage(null)
     try {
-      const response = await searchComics(selectedSource, value, 1)
-      setResults(response.comics)
-      setSearchMessage(response.comics.length === 0 ? '没有结果' : null)
+      const response = await doSearch(value, sourceKey, page)
+      if (page === 1) {
+        setResults(response.comics)
+        setResultSource(sourceKey)
+        addToHistory(value)
+        setKeyword(value)
+      } else {
+        setResults((prev) => [...prev, ...response.comics])
+      }
+      setResultPage(page)
+      setResultMaxPage(response.max_page)
+      setSearchMessage(
+        response.comics.length === 0 && page === 1 ? '没有结果' : null
+      )
     } catch (err) {
-      setResults([])
-      setSearchMessage(err instanceof Error ? err.message : '搜索失败')
+      if (page === 1) {
+        setResults([])
+        setSearchMessage(err instanceof Error ? err.message : '搜索失败')
+      }
     } finally {
       setSearching(false)
+      setLoadingMore(false)
     }
+  }
+
+  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    handleSearch(keyword, 1)
+  }
+
+  const handleLoadMore = () => {
+    if (loadingMore || resultMaxPage == null || resultPage >= resultMaxPage) return
+    handleSearch(keyword, resultPage + 1)
   }
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -1438,45 +1746,138 @@ function SearchView({
     }
   }
 
+  const hasResults = results.length > 0
+  const hasMore = resultMaxPage != null && resultPage < resultMaxPage
+
   return (
     <div className="view-stack">
       <PageHeader title="搜索" onBack={onBack} />
-      <form className="search-strip" aria-label="搜索" onSubmit={handleSearch}>
+      <form className="search-strip" aria-label="搜索" onSubmit={handleSubmit}>
         <Search size={20} />
         <input
           value={keyword}
-          placeholder={selectedSource ? '关键词' : '先启用漫画源'}
-          disabled={!selectedSource || searching}
+          placeholder={enabledSources.length > 0 ? '关键词' : '先启用漫画源'}
+          disabled={enabledSources.length === 0 || searching}
           onChange={(event) => setKeyword(event.target.value)}
         />
-        <select
-          value={selectedSource}
-          disabled={enabledSources.length === 0 || searching}
-          aria-label="漫画源"
-          onChange={(event) => handleSourceChange(event.target.value)}
-        >
-          {enabledSources.map((source) => (
-            <option key={source.key} value={source.key}>
-              {source.name}
-            </option>
-          ))}
-        </select>
-        <button className="primary-button" disabled={!keyword.trim() || !selectedSource || searching} type="submit">
+        <button className="primary-button" disabled={!keyword.trim() || searching || enabledSources.length === 0} type="submit">
           {searching ? '搜索中' : '搜索'}
         </button>
       </form>
-      <Panel title="搜索结果" action={String(results.length)}>
-        {searchMessage ? (
-          <EmptyLine icon={Search} text={searchMessage} />
-        ) : (
-          <SearchResults
-            comics={results}
-            onSelect={(comic) => {
-              if (selectedSource) onOpenComic(searchComicToOpenRequest(selectedSource, comic))
+
+      {enabledSources.length > 0 ? (
+        <div className="source-chip-list" role="radiogroup" aria-label="漫画源">
+          {enabledSources.map((source) => (
+            <button
+              key={source.key}
+              className={source.key === selectedSource && !aggregatedSearch ? 'source-chip active' : 'source-chip'}
+              type="button"
+              role="radio"
+              aria-checked={source.key === selectedSource && !aggregatedSearch}
+              onClick={() => handleSourceChange(source.key)}
+            >
+              {source.name}
+            </button>
+          ))}
+          <button
+            className={aggregatedSearch ? 'source-chip active' : 'source-chip'}
+            type="button"
+            role="radio"
+            aria-checked={aggregatedSearch}
+            onClick={() => {
+              setAggregatedSearch(true)
+              setResults([])
+              setSearchMessage(null)
+              setResultPage(1)
+              setResultMaxPage(null)
             }}
-          />
-        )}
-      </Panel>
+          >
+            聚合搜索
+          </button>
+        </div>
+      ) : null}
+
+      {searchHistory.length > 0 && !hasResults ? (
+        <Panel title="搜索历史" action={String(searchHistory.length)}>
+          <div className="result-list">
+            {searchHistory.map((item) => (
+              <div className="result-row" key={item}>
+                <button
+                  className="library-row"
+                  type="button"
+                  onClick={() => handleSearch(item, 1)}
+                  style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}
+                >
+                  <div className="result-main">
+                    <strong>{item}</strong>
+                  </div>
+                </button>
+                <button
+                  className="icon-button"
+                  type="button"
+                  aria-label={`删除 ${item}`}
+                  onClick={() => removeFromHistory(item)}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      ) : null}
+
+      {hasResults ? (
+        <div className="source-list-content">
+          <div className="source-section-title">
+            <strong>搜索结果</strong>
+            <span>{results.length}{resultMaxPage != null ? ` / 第 ${resultPage} 页` : ''}</span>
+          </div>
+          <div className="comic-grid">
+            {results.map((comic) => (
+              <button
+                className="comic-tile"
+                key={`${resultSource}:${comic.id}`}
+                type="button"
+                onClick={() => {
+                  const sourceKey = aggregatedSearch ? resultSource : selectedSource
+                  if (sourceKey) onOpenComic(searchComicToOpenRequest(sourceKey, comic))
+                }}
+              >
+                <CoverImage url={comic.cover} iconSize={18} />
+                <div className="comic-tile-main">
+                  <strong>{comic.title}</strong>
+                  <div className="comic-meta-rows">
+                    {comic.subtitle ? (
+                      <div className="comic-meta-row">
+                        <span className="comic-meta-label blue">作者</span>
+                        <span className="comic-meta-value">{comic.subtitle}</span>
+                      </div>
+                    ) : null}
+                    {comic.tags.length > 0 ? (
+                      <div className="comic-meta-row">
+                        <span className="comic-meta-label pink">标签</span>
+                        <span className="comic-meta-value">{comic.tags.slice(0, 4).join(', ')}</span>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+          {hasMore ? (
+            <LoadMoreSentinel loading={loadingMore} onLoadMore={handleLoadMore} />
+          ) : null}
+        </div>
+      ) : null}
+
+      {searchMessage && !hasResults ? (
+        <EmptyLine icon={Search} text={searchMessage} />
+      ) : null}
+
+      {!hasResults && !searchMessage && searchHistory.length === 0 ? (
+        <EmptyLine icon={Search} text="输入关键词开始搜索" />
+      ) : null}
+
       <Panel title="源管理" action={String(sources.length)}>
         <div className="source-toolbar">
           <label className="icon-text-button">
@@ -2009,8 +2410,8 @@ function GroupedLibraryList({
 
 function dateGroupTitle(value: string | null) {
   if (!value) return '更早'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '更早'
+  const date = parseAppDate(value)
+  if (!date) return '更早'
   const now = new Date()
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const day = new Date(date.getFullYear(), date.getMonth(), date.getDate())
@@ -2054,18 +2455,42 @@ function ComicTile({
   compact?: boolean
   onSelect?: (item: LibraryItem) => void
 }) {
+  const rows = libraryItemMetaRows(item)
+  if (compact) {
+    return (
+      <button className="comic-tile compact" type="button" onClick={() => onSelect?.(item)} title={item.title}>
+        <div className="comic-tile-cover">
+          <CoverImage url={item.cover} iconSize={18} />
+        </div>
+        <strong>{item.title}</strong>
+      </button>
+    )
+  }
+
   return (
-    <button
-      className={compact ? 'comic-tile compact' : 'comic-tile'}
-      type="button"
-      onClick={() => onSelect?.(item)}
-      title={item.title}
-    >
-      <CoverImage url={item.cover} iconSize={18} />
-      <strong>{item.title}</strong>
-      {item.episode_title ? <span>{item.episode_title}</span> : null}
-      {item.subtitle ? <small>{item.subtitle}</small> : null}
+    <button className="comic-tile" type="button" onClick={() => onSelect?.(item)} title={item.title}>
+      <div className="comic-tile-cover">
+        <CoverImage url={item.cover} iconSize={18} />
+      </div>
+      <div className="comic-tile-main">
+        <strong>{item.title}</strong>
+        <ComicMetaRows rows={rows} />
+      </div>
     </button>
+  )
+}
+
+function ComicMetaRows({ rows }: { rows: ComicMetaRow[] }) {
+  if (rows.length === 0) return null
+  return (
+    <div className="comic-meta-rows">
+      {rows.slice(0, 5).map((row) => (
+        <div className="comic-meta-row" key={`${row.label}:${row.value}`}>
+          <span className={`comic-meta-label ${row.tone}`}>{row.label}</span>
+          <span className="comic-meta-value">{row.value}</span>
+        </div>
+      ))}
+    </div>
   )
 }
 
@@ -2548,10 +2973,13 @@ function SourceComicGrid({
           title={comic.title}
           onClick={() => onSelect(comic)}
         >
-          <CoverImage url={comic.cover} iconSize={18} />
-          <strong>{comic.title}</strong>
-          {comic.subtitle ? <small>{comic.subtitle}</small> : null}
-          {comic.tags.length > 0 ? <small>{comic.tags.slice(0, 2).join(' / ')}</small> : null}
+          <div className="comic-tile-cover">
+            <CoverImage url={comic.cover} iconSize={18} />
+          </div>
+          <div className="comic-tile-main">
+            <strong>{comic.title}</strong>
+            <ComicMetaRows rows={searchComicMetaRows(comic)} />
+          </div>
         </button>
       ))}
     </div>
@@ -2695,6 +3123,7 @@ function SettingsView({
   settings,
   themeMode,
   readerMode,
+  sources,
   onBack,
   onThemeChange,
   onReaderModeChange,
@@ -2703,55 +3132,236 @@ function SettingsView({
   settings: SettingsResponse | null
   themeMode: string
   readerMode: ReaderMode
+  sources: SourceSummary[]
   onBack: () => void
   onThemeChange: (value: string) => Promise<void>
   onReaderModeChange: (value: ReaderMode) => Promise<void>
   onImportComplete: () => void | Promise<void>
 }) {
   const hidden = settings?.hidden_features ?? []
+  const [activeSection, setActiveSection] = useState<SettingsSectionKey>('appearance')
+  const cacheLimitMb = useMemo(() => {
+    const value = settings?.values.cacheLimitMb
+    return typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : 1024
+  }, [settings])
+  const enabledSources = useMemo(
+    () => sources.filter((source) => source.enabled && source.runtime_status === 'registered'),
+    [sources]
+  )
+  const sections = [
+    { key: 'appearance' as const, title: '显示', icon: Settings },
+    { key: 'reading' as const, title: '阅读', icon: BookOpen },
+    { key: 'explore' as const, title: '发现', icon: Compass },
+    { key: 'network' as const, title: '网络', icon: WifiOff },
+    { key: 'webdav' as const, title: 'WebDAV', icon: Upload },
+    { key: 'about' as const, title: '关于', icon: Bookmark },
+    { key: 'hidden' as const, title: 'Web 屏蔽项', icon: EyeOff, count: hidden.length }
+  ]
+
+  const updateSetting = async (key: string, value: unknown) => {
+    await updateSettings({ [key]: value })
+  }
 
   return (
-    <div className="view-stack">
+    <div className="view-stack settings-page">
       <PageHeader title="设置" onBack={onBack} />
-      <Panel title="显示">
-        <div className="segmented-control" role="group" aria-label="主题">
-          {['system', 'light', 'dark'].map((value) => (
-            <button
-              key={value}
-              className={themeMode === value ? 'selected' : ''}
-              type="button"
-              onClick={() => void onThemeChange(value)}
-            >
-              {value === 'system' ? '系统' : value === 'light' ? '浅色' : '深色'}
-            </button>
+      <div className="settings-shell">
+        <aside className="settings-rail" aria-label="设置分类">
+          {sections.map((section) => (
+            <SettingsCategoryButton
+              key={section.key}
+              title={section.title}
+              icon={section.icon}
+              count={section.count}
+              active={activeSection === section.key}
+              onClick={() => setActiveSection(section.key)}
+            />
           ))}
-        </div>
-      </Panel>
-      <Panel title="阅读方式">
-        <div className="reader-mode-control" role="group" aria-label="阅读方式">
-          {readerModeOptions.map((option) => (
-            <button
-              key={option.key}
-              className={readerMode === option.key ? 'selected' : ''}
-              type="button"
-              onClick={() => void onReaderModeChange(option.key)}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-      </Panel>
-      <WebDavPanel onImportComplete={onImportComplete} />
-      <Panel title="Web 屏蔽项" action={String(hidden.length)}>
-        <div className="hidden-list">
-          {hidden.map((item) => (
-            <div className="data-row" key={item}>
-              <EyeOff size={17} />
-              <span>{item}</span>
-            </div>
-          ))}
-        </div>
-      </Panel>
+        </aside>
+        <section className="settings-detail-pane">
+          {activeSection === 'appearance' ? (
+            <SettingsPart title="显示" icon={Settings}>
+              <SettingRow title="主题" subtitle="跟随系统或固定明暗色">
+                <div className="segmented-control" role="group" aria-label="主题">
+                  {['system', 'light', 'dark'].map((value) => (
+                    <button
+                      key={value}
+                      className={themeMode === value ? 'selected' : ''}
+                      type="button"
+                      onClick={() => void onThemeChange(value)}
+                    >
+                      {value === 'system' ? '系统' : value === 'light' ? '浅色' : '深色'}
+                    </button>
+                  ))}
+                </div>
+              </SettingRow>
+            </SettingsPart>
+          ) : null}
+          {activeSection === 'reading' ? (
+            <SettingsPart title="阅读" icon={BookOpen}>
+              <SettingRow title="阅读方式" subtitle="Web 端隐藏原生端专用控制">
+                <div className="reader-mode-control" role="group" aria-label="阅读方式">
+                  {readerModeOptions.map((option) => (
+                    <button
+                      key={option.key}
+                      className={readerMode === option.key ? 'selected' : ''}
+                      type="button"
+                      onClick={() => void onReaderModeChange(option.key)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </SettingRow>
+            </SettingsPart>
+          ) : null}
+          {activeSection === 'explore' ? (
+            <SettingsPart title="发现" icon={Compass}>
+              <div className="settings-list">
+                <SettingRow title="探索页面" subtitle="从漫画源获取的探索页面列表">
+                  <span className="muted-text">{enabledSources.length} 个可用源</span>
+                </SettingRow>
+                {enabledSources.slice(0, 8).map((source) => (
+                  <div className="settings-list-tile" key={source.key}>
+                    <div>
+                      <strong>{source.name}</strong>
+                      <span>{source.version ? `v${source.version}` : '未知版本'}</span>
+                    </div>
+                    <StatusPill ok={source.enabled} text={source.enabled ? '启用' : '停用'} />
+                  </div>
+                ))}
+                {enabledSources.length === 0 ? <EmptyLine icon={Compass} text="暂无启用的漫画源" /> : null}
+              </div>
+            </SettingsPart>
+          ) : null}
+          {activeSection === 'network' ? (
+            <SettingsPart title="网络" icon={WifiOff}>
+              <SettingRow title="图片缓存上限" subtitle={`当前: ${cacheLimitMb} MB`}>
+                <span className="muted-text">{cacheLimitMb >= 10240 ? '无限制' : `${cacheLimitMb} MB`}</span>
+              </SettingRow>
+              <div className="settings-list-tile">
+                <div>
+                  <strong>服务端地址</strong>
+                  <span>Web PWA 网络请求由服务端代理</span>
+                </div>
+              </div>
+            </SettingsPart>
+          ) : null}
+          {activeSection === 'about' ? (
+            <SettingsPart title="关于" icon={Bookmark}>
+              <div className="settings-list">
+                <div className="settings-list-tile">
+                  <div>
+                    <strong>Venera</strong>
+                    <span>漫画阅读器 / Manga & Comic Reader</span>
+                  </div>
+                </div>
+                <div className="settings-list-tile">
+                  <div>
+                    <strong>版本</strong>
+                    <span>{settings?.values.version != null ? String(settings.values.version) : '1.6.3'}</span>
+                  </div>
+                </div>
+                <div className="settings-list-tile">
+                  <div>
+                    <strong>许可证</strong>
+                    <span>MIT License</span>
+                  </div>
+                </div>
+                <div className="settings-list-tile">
+                  <div>
+                    <strong>GitHub</strong>
+                    <span>
+                      <a href="https://github.com/kyosee/venera" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--primary)' }}>
+                        github.com/kyosee/venera
+                      </a>
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </SettingsPart>
+          ) : null}
+          {activeSection === 'webdav' ? <WebDavPanel onImportComplete={onImportComplete} /> : null}
+          {activeSection === 'hidden' ? (
+            <SettingsPart title="Web 屏蔽项" icon={EyeOff}>
+              <div className="settings-list">
+                {hidden.map((item) => (
+                  <div className="settings-list-tile" key={item}>
+                    <div>
+                      <strong>{item}</strong>
+                      <span>Web 端不可用，已隐藏</span>
+                    </div>
+                  </div>
+                ))}
+                {hidden.length === 0 ? <EmptyLine icon={EyeOff} text="暂无屏蔽项" /> : null}
+              </div>
+            </SettingsPart>
+          ) : null}
+        </section>
+      </div>
+    </div>
+  )
+}
+
+function SettingsCategoryButton({
+  title,
+  icon: Icon,
+  count,
+  active,
+  onClick
+}: {
+  title: string
+  icon: typeof Home
+  count?: number
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <button className={active ? 'settings-category active' : 'settings-category'} type="button" onClick={onClick}>
+      <Icon size={22} />
+      <span>{title}</span>
+      {count != null ? <small>{count}</small> : null}
+      {active ? <ChevronRight size={18} /> : null}
+    </button>
+  )
+}
+
+function SettingsPart({
+  title,
+  icon: Icon,
+  children
+}: {
+  title: string
+  icon: typeof Home
+  children: React.ReactNode
+}) {
+  return (
+    <div className="settings-part">
+      <div className="settings-part-title">
+        <Icon size={24} />
+        <h2>{title}</h2>
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function SettingRow({
+  title,
+  subtitle,
+  children
+}: {
+  title: string
+  subtitle?: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="settings-list-tile">
+      <div>
+        <strong>{title}</strong>
+        {subtitle ? <span>{subtitle}</span> : null}
+      </div>
+      <div className="settings-row-control">{children}</div>
     </div>
   )
 }
