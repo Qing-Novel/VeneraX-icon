@@ -93,6 +93,10 @@ import {
 import { ReloadPrompt } from './ReloadPrompt'
 import { ThemeProvider } from './theme/ThemeProvider'
 import { SnackbarHost } from './ui/Snackbar'
+import { AppDataProvider } from './context/AppDataContext'
+import { LibraryProvider } from './context/LibraryContext'
+import { TasksProvider } from './context/TasksContext'
+import { NavigationProvider } from './context/NavigationContext'
 
 type TabKey =
   | 'home'
@@ -718,14 +722,18 @@ export default function App() {
   )
 
   return (
-    <ThemeProvider
-      colorSetting={typeof data.settings?.values.color === 'string' ? data.settings.values.color : 'blue'}
-      themeMode={(themeMode === 'light' || themeMode === 'dark') ? themeMode : 'system'}
-    >
-      <SnackbarHost>
-        <div className="app-shell">
-          <SideNav activeTab={activePrimaryTab} onSelect={openTab} />
-          <main className="main-area">
+    <AppDataProvider>
+      <LibraryProvider>
+        <TasksProvider>
+          <NavigationProvider>
+            <ThemeProvider
+              colorSetting={typeof data.settings?.values.color === 'string' ? data.settings.values.color : 'blue'}
+              themeMode={(themeMode === 'light' || themeMode === 'dark') ? themeMode : 'system'}
+            >
+              <SnackbarHost>
+                <div className="app-shell">
+                  <SideNav activeTab={activePrimaryTab} onSelect={openTab} />
+                  <main className="main-area">
         {showRootChrome ? (
           <TopBar
             activeTab={activePrimaryTab}
@@ -862,8 +870,12 @@ export default function App() {
       {showRootChrome ? <BottomNav activeTab={activePrimaryTab} onSelect={openTab} /> : null}
       <ReloadPrompt />
         </div>
-      </SnackbarHost>
-    </ThemeProvider>
+              </SnackbarHost>
+            </ThemeProvider>
+          </NavigationProvider>
+        </TasksProvider>
+      </LibraryProvider>
+    </AppDataProvider>
   )
 }
 
