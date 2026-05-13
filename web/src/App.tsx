@@ -178,6 +178,16 @@ const emptyData: AppData = {
 
 const libraryPageStep = 100
 
+function emptyFollowUpdates(folder: string | null): FollowUpdatesResponse {
+  return { folder, updated_total: 0, all_total: 0, updated: [], all: [] }
+}
+
+function storedFollowFolder(settings: SettingsResponse, folders: FavoriteFolder[]) {
+  const value = settings.values.followUpdatesFolder
+  if (typeof value !== 'string' || value.trim() === '') return null
+  return folders.some((folder) => folder.name === value) ? value : null
+}
+
 function libraryItemKey(item: LibraryItem) {
   return `${item.source_key}:${item.comic_id}:${item.episode_id ?? ''}`
 }
@@ -241,6 +251,8 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [loadingMoreLibrary, setLoadingMoreLibrary] = useState<'history' | 'favorites' | null>(null)
   const [activeFavoriteFolder, setActiveFavoriteFolder] = useState<string | null>(null)
+  const [activeFollowFolder, setActiveFollowFolder] = useState<string | null>(null)
+  const [loadingFollowUpdates, setLoadingFollowUpdates] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<string | null>(null)
 
@@ -248,15 +260,19 @@ export default function App() {
     setLoading(true)
     setError(null)
     try {
-      const [health, settings, sources, library, followUpdates] = await Promise.all([
+      const [health, settings, sources, library] = await Promise.all([
         getHealth(),
         getSettings(),
         getSources(),
-        getLibrary(),
-        getFollowUpdates()
+        getLibrary()
       ])
+      const followFolder = storedFollowFolder(settings, library.favorite_folders)
+      const followUpdates = followFolder
+        ? await getFollowUpdates({ folder: followFolder })
+        : emptyFollowUpdates(null)
       setData({ health, settings, sources, library, followUpdates })
       setActiveFavoriteFolder(null)
+      setActiveFollowFolder(followFolder)
       setLastUpdated(new Date().toLocaleTimeString('zh-CN', { hour12: false }))
     } catch (err) {
       setError(err instanceof Error ? err.message : '服务端请求失败')
@@ -416,6 +432,39 @@ export default function App() {
     }
   }
 
+  const selectFollowFolder = async (folder: string | null) => {
+    setActiveFollowFolder(folder)
+    setLoadingFollowUpdates(true)
+    setError(null)
+    try {
+      const [settings, followUpdates] = await Promise.all([
+        updateSettings({ followUpdatesFolder: folder }),
+        folder ? getFollowUpdates({ folder }) : Promise.resolve(emptyFollowUpdates(null))
+      ])
+      setData((current) => ({ ...current, settings, followUpdates }))
+      setLastUpdated(new Date().toLocaleTimeString('zh-CN', { hour12: false }))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '追更文件夹加载失败')
+    } finally {
+      setLoadingFollowUpdates(false)
+    }
+  }
+
+  const refreshFollowUpdates = async () => {
+    if (!activeFollowFolder) return
+    setLoadingFollowUpdates(true)
+    setError(null)
+    try {
+      const followUpdates = await getFollowUpdates({ folder: activeFollowFolder })
+      setData((current) => ({ ...current, followUpdates }))
+      setLastUpdated(new Date().toLocaleTimeString('zh-CN', { hour12: false }))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '追更刷新失败')
+    } finally {
+      setLoadingFollowUpdates(false)
+    }
+  }
+
   const openTab = (tab: TabKey) => {
     if (isPrimaryTabKey(tab)) setActivePrimaryTab(tab)
     setActiveTab(tab)
@@ -550,7 +599,12 @@ export default function App() {
           {route.kind === 'main' && activeTab === 'updates' ? (
             <UpdatesView
               data={data.followUpdates}
+              folders={data.library.favorite_folders}
+              activeFolder={activeFollowFolder}
+              loading={loadingFollowUpdates}
               onBack={closeStandalonePage}
+              onFolderSelect={selectFollowFolder}
+              onRefresh={refreshFollowUpdates}
               onOpenComic={openDetail}
             />
           ) : null}
@@ -1501,65 +1555,131 @@ function ComicDetails({
 
 function UpdatesView({
   data,
+  folders,
+  activeFolder,
+  loading,
   onBack,
+  onFolderSelect,
+  onRefresh,
   onOpenComic
 }: {
   data: FollowUpdatesResponse
+  folders: FavoriteFolder[]
+  activeFolder: string | null
+  loading: boolean
   onBack: () => void
+  onFolderSelect: (folder: string | null) => Promise<void>
+  onRefresh: () => Promise<void>
   onOpenComic: (request: ComicOpenRequest) => void
 }) {
   const [activeList, setActiveList] = useState<'updated' | 'all'>('updated')
   const visibleItems = activeList === 'updated' ? data.updated : data.all
   const visibleTotal = activeList === 'updated' ? data.updated_total : data.all_total
+  const activeFolderTitle =
+    activeFolder == null
+      ? '未配置'
+      : folders.find((folder) => folder.name === activeFolder)?.title ?? activeFolder
 
   return (
-    <div className="view-stack">
-      <PageHeader title="追更" onBack={onBack} />
-      <section className="follow-config-card">
-        <div className="follow-config-title">
-          <RefreshCw size={20} />
-          <strong>追更</strong>
-          <span>{data.folder ?? '全部收藏夹'}</span>
-        </div>
-        <div className="follow-config-stats">
-          <span>更新 {data.updated_total}</span>
-          <span>追踪 {data.all_total}</span>
-        </div>
-      </section>
-      <div className="app-tabs" role="tablist" aria-label="追更列表">
-        <button
-          className={activeList === 'updated' ? 'selected' : ''}
-          type="button"
-          role="tab"
-          aria-selected={activeList === 'updated'}
-          onClick={() => setActiveList('updated')}
-        >
-          更新
-        </button>
-        <button
-          className={activeList === 'all' ? 'selected' : ''}
-          type="button"
-          role="tab"
-          aria-selected={activeList === 'all'}
-          onClick={() => setActiveList('all')}
-        >
-          全部
-        </button>
-      </div>
-      <Panel title={activeList === 'updated' ? '更新' : '全部漫画'} action={String(visibleTotal)}>
-        <LibraryGrid
-          items={visibleItems}
-          emptyText={
-            activeList === 'updated'
-              ? data.all_total > 0
-                ? '暂无更新'
-                : '暂无追更数据'
-              : '暂无追更数据'
-          }
-          icon={RefreshCw}
-          onSelect={(item) => onOpenComic(libraryItemToOpenRequest(item))}
+    <div className="favorite-layout follow-layout">
+      <aside className="favorite-folder-panel" aria-label="追更收藏夹">
+        <div className="folder-section-title">追更收藏夹</div>
+        <FavoriteFolderButton
+          title="未配置"
+          count={0}
+          active={activeFolder == null}
+          onClick={() => void onFolderSelect(null)}
         />
-      </Panel>
+        {folders.map((folder) => (
+          <FavoriteFolderButton
+            key={folder.name}
+            title={folder.title}
+            count={folder.count}
+            active={activeFolder === folder.name}
+            onClick={() => void onFolderSelect(folder.name)}
+          />
+        ))}
+      </aside>
+      <div className="view-stack">
+        <PageHeader
+          title="追更"
+          onBack={onBack}
+          actions={
+            <button
+              className="icon-button"
+              type="button"
+              aria-label="刷新追更"
+              disabled={!activeFolder || loading}
+              onClick={() => void onRefresh()}
+            >
+              {loading ? <Loader2 className="spin" size={18} /> : <RefreshCw size={18} />}
+            </button>
+          }
+        />
+        <section className="follow-config-card">
+          <div className="follow-config-title">
+            <RefreshCw size={20} />
+            <strong>追更</strong>
+            <span>{activeFolderTitle}</span>
+          </div>
+          {activeFolder ? (
+            <div className="follow-config-stats">
+              <span>更新 {data.updated_total}</span>
+              <span>追踪 {data.all_total}</span>
+            </div>
+          ) : (
+            <div className="follow-config-stats">
+              <span>选择收藏夹后显示追更</span>
+            </div>
+          )}
+        </section>
+        {activeFolder ? (
+          <>
+            <div className="app-tabs" role="tablist" aria-label="追更列表">
+              <button
+                className={activeList === 'updated' ? 'selected' : ''}
+                type="button"
+                role="tab"
+                aria-selected={activeList === 'updated'}
+                onClick={() => setActiveList('updated')}
+              >
+                更新
+              </button>
+              <button
+                className={activeList === 'all' ? 'selected' : ''}
+                type="button"
+                role="tab"
+                aria-selected={activeList === 'all'}
+                onClick={() => setActiveList('all')}
+              >
+                全部
+              </button>
+            </div>
+            <Panel title={activeList === 'updated' ? '更新' : '全部漫画'} action={String(visibleTotal)}>
+              {loading ? (
+                <EmptyLine icon={Loader2} text="加载追更中" />
+              ) : (
+                <LibraryGrid
+                  items={visibleItems}
+                  emptyText={
+                    activeList === 'updated'
+                      ? data.all_total > 0
+                        ? '暂无更新'
+                        : '暂无追更数据'
+                      : '暂无追更数据'
+                  }
+                  icon={RefreshCw}
+                  onSelect={(item) => onOpenComic(libraryItemToOpenRequest(item))}
+                />
+              )}
+            </Panel>
+          </>
+        ) : (
+          <Panel title="收藏夹" action={String(folders.length)}>
+            <EmptyLine icon={FolderOpen} text={folders.length > 0 ? '请选择收藏夹' : '暂无收藏文件夹'} />
+          </Panel>
+        )}
+      </div>
     </div>
   )
 }

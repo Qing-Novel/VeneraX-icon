@@ -354,6 +354,11 @@ button {
   background: var(--surface-soft);
 }
 
+.icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .icon-text-button {
   gap: 6px;
   min-height: 34px;
@@ -503,6 +508,10 @@ button {
 
 .follow-config-stats {
   flex-wrap: wrap;
+}
+
+.follow-config-stats span {
+  min-width: 0;
 }
 
 .app-tabs {
