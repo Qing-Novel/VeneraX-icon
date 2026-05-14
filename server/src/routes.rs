@@ -1247,8 +1247,9 @@ fn read_library(state: &AppState, query: LibraryQuery) -> ApiResult<LibraryRespo
             let mut statement = database.prepare(
                 r#"
                 SELECT f.source_key, f.comic_id, f.title, f.subtitle, f.cover,
-                       NULL, NULL, h.page, h.max_page, i.created_at,
-                       s.name, COALESCE(m.author, f.subtitle), COALESCE(i.last_update_time, m.update_time),
+                       h.episode_id, h.episode_title, h.page, h.max_page, i.created_at,
+                       s.name, COALESCE(m.author, f.subtitle),
+                       COALESCE(NULLIF(m.update_time, ''), CASE WHEN i.last_update_time NOT LIKE '__%' THEN i.last_update_time ELSE NULL END),
                        f.tags, m.tags_json, m.status, NULL,
                        CASE WHEN m.page_count IS NOT NULL THEN CAST(m.page_count AS TEXT) ELSE NULL END,
                        m.description, m.latest_title, i.has_new_update
@@ -1276,7 +1277,7 @@ fn read_library(state: &AppState, query: LibraryQuery) -> ApiResult<LibraryRespo
             let mut statement = database.prepare(
                 r#"
                 SELECT f.source_key, f.comic_id, f.title, f.subtitle, f.cover,
-                       NULL, NULL, h.page, h.max_page, f.created_at,
+                       h.episode_id, h.episode_title, h.page, h.max_page, f.created_at,
                        s.name, COALESCE(m.author, f.subtitle), m.update_time,
                        f.tags, m.tags_json, m.status, NULL,
                        CASE WHEN m.page_count IS NOT NULL THEN CAST(m.page_count AS TEXT) ELSE NULL END,
@@ -1453,11 +1454,19 @@ fn read_follow_updates(
                 r#"
                 SELECT COUNT(*)
                 FROM favorite_folder_items i
-                JOIN reading_history h ON h.source_key = i.source_key AND h.comic_id = i.comic_id
+                JOIN comic_metadata m ON m.source_key = i.source_key AND m.comic_id = i.comic_id
                 WHERE i.folder_name = ?1
-                  AND h.max_page IS NOT NULL
-                  AND h.page IS NOT NULL
-                  AND h.page >= h.max_page
+                  AND m.status IS NOT NULL
+                  AND m.status NOT LIKE '%连载%'
+                  AND m.status NOT LIKE '%連載%'
+                  AND lower(m.status) NOT LIKE '%ongoing%'
+                  AND (
+                    m.status LIKE '%完结%'
+                    OR m.status LIKE '%完結%'
+                    OR lower(m.status) LIKE '%completed%'
+                    OR lower(m.status) LIKE '%finished%'
+                    OR lower(m.status) LIKE '%ended%'
+                  )
                 "#,
                 params![folder_name],
                 |row| row.get::<_, u64>(0),
@@ -1465,8 +1474,9 @@ fn read_follow_updates(
             let mut statement = database.prepare(
                 r#"
                 SELECT f.source_key, f.comic_id, f.title, f.subtitle, f.cover,
-                       NULL, NULL, h.page, h.max_page, COALESCE(i.last_update_time, i.created_at),
-                       s.name, COALESCE(m.author, f.subtitle), COALESCE(i.last_update_time, m.update_time),
+                       h.episode_id, h.episode_title, h.page, h.max_page, COALESCE(i.last_update_time, i.created_at),
+                       s.name, COALESCE(m.author, f.subtitle),
+                       COALESCE(NULLIF(m.update_time, ''), CASE WHEN i.last_update_time NOT LIKE '__%' THEN i.last_update_time ELSE NULL END),
                        f.tags, m.tags_json, m.status, NULL,
                        CASE WHEN m.page_count IS NOT NULL THEN CAST(m.page_count AS TEXT) ELSE NULL END,
                        m.description, m.latest_title, i.has_new_update
@@ -1488,8 +1498,9 @@ fn read_follow_updates(
             let mut unread_statement = database.prepare(
                 r#"
                 SELECT f.source_key, f.comic_id, f.title, f.subtitle, f.cover,
-                       NULL, NULL, h.page, h.max_page, COALESCE(i.last_update_time, i.created_at),
-                       s.name, COALESCE(m.author, f.subtitle), COALESCE(i.last_update_time, m.update_time),
+                       h.episode_id, h.episode_title, h.page, h.max_page, COALESCE(i.last_update_time, i.created_at),
+                       s.name, COALESCE(m.author, f.subtitle),
+                       COALESCE(NULLIF(m.update_time, ''), CASE WHEN i.last_update_time NOT LIKE '__%' THEN i.last_update_time ELSE NULL END),
                        f.tags, m.tags_json, m.status, NULL,
                        CASE WHEN m.page_count IS NOT NULL THEN CAST(m.page_count AS TEXT) ELSE NULL END,
                        m.description, m.latest_title, i.has_new_update
@@ -1512,20 +1523,29 @@ fn read_follow_updates(
             let mut ended_statement = database.prepare(
                 r#"
                 SELECT f.source_key, f.comic_id, f.title, f.subtitle, f.cover,
-                       NULL, NULL, h.page, h.max_page, COALESCE(i.last_update_time, i.created_at),
-                       s.name, COALESCE(m.author, f.subtitle), COALESCE(i.last_update_time, m.update_time),
+                       h.episode_id, h.episode_title, h.page, h.max_page, COALESCE(i.last_update_time, i.created_at),
+                       s.name, COALESCE(m.author, f.subtitle),
+                       COALESCE(NULLIF(m.update_time, ''), CASE WHEN i.last_update_time NOT LIKE '__%' THEN i.last_update_time ELSE NULL END),
                        f.tags, m.tags_json, m.status, NULL,
                        CASE WHEN m.page_count IS NOT NULL THEN CAST(m.page_count AS TEXT) ELSE NULL END,
                        m.description, m.latest_title, i.has_new_update
                 FROM favorite_folder_items i
                 JOIN favorites f ON f.source_key = i.source_key AND f.comic_id = i.comic_id
-                JOIN reading_history h ON h.source_key = i.source_key AND h.comic_id = i.comic_id
+                LEFT JOIN reading_history h ON h.source_key = i.source_key AND h.comic_id = i.comic_id
                 LEFT JOIN comic_sources s ON s.source_key = f.source_key
                 LEFT JOIN comic_metadata m ON m.source_key = f.source_key AND m.comic_id = f.comic_id
                 WHERE i.folder_name = ?1
-                  AND h.max_page IS NOT NULL
-                  AND h.page IS NOT NULL
-                  AND h.page >= h.max_page
+                  AND m.status IS NOT NULL
+                  AND m.status NOT LIKE '%连载%'
+                  AND m.status NOT LIKE '%連載%'
+                  AND lower(m.status) NOT LIKE '%ongoing%'
+                  AND (
+                    m.status LIKE '%完结%'
+                    OR m.status LIKE '%完結%'
+                    OR lower(m.status) LIKE '%completed%'
+                    OR lower(m.status) LIKE '%finished%'
+                    OR lower(m.status) LIKE '%ended%'
+                  )
                 ORDER BY COALESCE(i.last_update_time, i.created_at) DESC
                 LIMIT ?2 OFFSET ?3
                 "#,
@@ -1538,8 +1558,9 @@ fn read_follow_updates(
             let mut all_statement = database.prepare(
                 r#"
                 SELECT f.source_key, f.comic_id, f.title, f.subtitle, f.cover,
-                       NULL, NULL, h.page, h.max_page, COALESCE(i.last_update_time, i.created_at),
-                       s.name, COALESCE(m.author, f.subtitle), COALESCE(i.last_update_time, m.update_time),
+                       h.episode_id, h.episode_title, h.page, h.max_page, COALESCE(i.last_update_time, i.created_at),
+                       s.name, COALESCE(m.author, f.subtitle),
+                       COALESCE(NULLIF(m.update_time, ''), CASE WHEN i.last_update_time NOT LIKE '__%' THEN i.last_update_time ELSE NULL END),
                        f.tags, m.tags_json, m.status, NULL,
                        CASE WHEN m.page_count IS NOT NULL THEN CAST(m.page_count AS TEXT) ELSE NULL END,
                        m.description, m.latest_title, i.has_new_update
@@ -1600,10 +1621,18 @@ fn read_follow_updates(
                 r#"
                 SELECT COUNT(DISTINCT i.source_key || char(31) || i.comic_id)
                 FROM favorite_folder_items i
-                JOIN reading_history h ON h.source_key = i.source_key AND h.comic_id = i.comic_id
-                WHERE h.max_page IS NOT NULL
-                  AND h.page IS NOT NULL
-                  AND h.page >= h.max_page
+                JOIN comic_metadata m ON m.source_key = i.source_key AND m.comic_id = i.comic_id
+                WHERE m.status IS NOT NULL
+                  AND m.status NOT LIKE '%连载%'
+                  AND m.status NOT LIKE '%連載%'
+                  AND lower(m.status) NOT LIKE '%ongoing%'
+                  AND (
+                    m.status LIKE '%完结%'
+                    OR m.status LIKE '%完結%'
+                    OR lower(m.status) LIKE '%completed%'
+                    OR lower(m.status) LIKE '%finished%'
+                    OR lower(m.status) LIKE '%ended%'
+                  )
                 "#,
                 [],
                 |row| row.get::<_, u64>(0),
@@ -1611,10 +1640,10 @@ fn read_follow_updates(
             let mut statement = database.prepare(
                 r#"
                 SELECT f.source_key, f.comic_id, f.title, f.subtitle, f.cover,
-                       NULL, NULL, MAX(h.page) AS page, MAX(h.max_page) AS max_page,
+                       MAX(h.episode_id), MAX(h.episode_title), MAX(h.page) AS page, MAX(h.max_page) AS max_page,
                        MAX(COALESCE(i.last_update_time, i.created_at)) AS updated_at,
                        MAX(s.name), COALESCE(MAX(m.author), f.subtitle),
-                       COALESCE(MAX(i.last_update_time), MAX(m.update_time)),
+                       COALESCE(NULLIF(MAX(m.update_time), ''), MAX(CASE WHEN i.last_update_time NOT LIKE '__%' THEN i.last_update_time ELSE NULL END)),
                        f.tags, MAX(m.tags_json), MAX(m.status), NULL,
                        CASE WHEN MAX(m.page_count) IS NOT NULL THEN CAST(MAX(m.page_count) AS TEXT) ELSE NULL END,
                        MAX(m.description), MAX(m.latest_title), MAX(i.has_new_update)
@@ -1637,10 +1666,10 @@ fn read_follow_updates(
             let mut unread_statement = database.prepare(
                 r#"
                 SELECT f.source_key, f.comic_id, f.title, f.subtitle, f.cover,
-                       NULL, NULL, MAX(h.page) AS page, MAX(h.max_page) AS max_page,
+                       MAX(h.episode_id), MAX(h.episode_title), MAX(h.page) AS page, MAX(h.max_page) AS max_page,
                        MAX(COALESCE(i.last_update_time, i.created_at)) AS updated_at,
                        MAX(s.name), COALESCE(MAX(m.author), f.subtitle),
-                       COALESCE(MAX(i.last_update_time), MAX(m.update_time)),
+                       COALESCE(NULLIF(MAX(m.update_time), ''), MAX(CASE WHEN i.last_update_time NOT LIKE '__%' THEN i.last_update_time ELSE NULL END)),
                        f.tags, MAX(m.tags_json), MAX(m.status), NULL,
                        CASE WHEN MAX(m.page_count) IS NOT NULL THEN CAST(MAX(m.page_count) AS TEXT) ELSE NULL END,
                        MAX(m.description), MAX(m.latest_title), MAX(i.has_new_update) AS has_update
@@ -1663,22 +1692,30 @@ fn read_follow_updates(
             let mut ended_statement = database.prepare(
                 r#"
                 SELECT f.source_key, f.comic_id, f.title, f.subtitle, f.cover,
-                       NULL, NULL, MAX(h.page) AS page, MAX(h.max_page) AS max_page,
+                       MAX(h.episode_id), MAX(h.episode_title), MAX(h.page) AS page, MAX(h.max_page) AS max_page,
                        MAX(COALESCE(i.last_update_time, i.created_at)) AS updated_at,
                        MAX(s.name), COALESCE(MAX(m.author), f.subtitle),
-                       COALESCE(MAX(i.last_update_time), MAX(m.update_time)),
+                       COALESCE(NULLIF(MAX(m.update_time), ''), MAX(CASE WHEN i.last_update_time NOT LIKE '__%' THEN i.last_update_time ELSE NULL END)),
                        f.tags, MAX(m.tags_json), MAX(m.status), NULL,
                        CASE WHEN MAX(m.page_count) IS NOT NULL THEN CAST(MAX(m.page_count) AS TEXT) ELSE NULL END,
                        MAX(m.description), MAX(m.latest_title), MAX(i.has_new_update)
                 FROM favorite_folder_items i
                 JOIN favorites f ON f.source_key = i.source_key AND f.comic_id = i.comic_id
-                JOIN reading_history h ON h.source_key = i.source_key AND h.comic_id = i.comic_id
+                LEFT JOIN reading_history h ON h.source_key = i.source_key AND h.comic_id = i.comic_id
                 LEFT JOIN comic_sources s ON s.source_key = f.source_key
                 LEFT JOIN comic_metadata m ON m.source_key = f.source_key AND m.comic_id = f.comic_id
-                WHERE h.max_page IS NOT NULL
-                  AND h.page IS NOT NULL
-                  AND h.page >= h.max_page
                 GROUP BY f.source_key, f.comic_id
+                HAVING MAX(m.status) IS NOT NULL
+                  AND MAX(m.status) NOT LIKE '%连载%'
+                  AND MAX(m.status) NOT LIKE '%連載%'
+                  AND lower(MAX(m.status)) NOT LIKE '%ongoing%'
+                  AND (
+                    MAX(m.status) LIKE '%完结%'
+                    OR MAX(m.status) LIKE '%完結%'
+                    OR lower(MAX(m.status)) LIKE '%completed%'
+                    OR lower(MAX(m.status)) LIKE '%finished%'
+                    OR lower(MAX(m.status)) LIKE '%ended%'
+                  )
                 ORDER BY updated_at DESC
                 LIMIT ?1 OFFSET ?2
                 "#,
@@ -1691,10 +1728,10 @@ fn read_follow_updates(
             let mut all_statement = database.prepare(
                 r#"
                 SELECT f.source_key, f.comic_id, f.title, f.subtitle, f.cover,
-                       NULL, NULL, MAX(h.page) AS page, MAX(h.max_page) AS max_page,
+                       MAX(h.episode_id), MAX(h.episode_title), MAX(h.page) AS page, MAX(h.max_page) AS max_page,
                        MAX(COALESCE(i.last_update_time, i.created_at)) AS updated_at,
                        MAX(s.name), COALESCE(MAX(m.author), f.subtitle),
-                       COALESCE(MAX(i.last_update_time), MAX(m.update_time)),
+                       COALESCE(NULLIF(MAX(m.update_time), ''), MAX(CASE WHEN i.last_update_time NOT LIKE '__%' THEN i.last_update_time ELSE NULL END)),
                        f.tags, MAX(m.tags_json), MAX(m.status), NULL,
                        CASE WHEN MAX(m.page_count) IS NOT NULL THEN CAST(MAX(m.page_count) AS TEXT) ELSE NULL END,
                        MAX(m.description), MAX(m.latest_title), MAX(i.has_new_update) AS has_update

@@ -321,17 +321,51 @@ function searchComicMetaRows(comic: SearchComic, sourceKey?: string | null): Com
     rawText(comic.raw, ['uploadTime', 'upload_time'])
   ])
   const status = rawText(comic.raw, ['status', 'state'])
-  const pages = rawText(comic.raw, ['maxPage', 'pages', 'pageCount'])
   const description = rawText(comic.raw, ['description', 'desc', 'intro', 'introduction'])
   return [
     { label: '作者', value: firstPresent([comic.subtitle, rawText(comic.raw, ['author', 'authors', 'uploader', 'artist'])]) ?? '', tone: 'blue' },
     { label: '更新', value: update ?? '', tone: 'cyan' },
     { label: '来源', value: sourceKey ?? '', tone: 'cyan' },
-    { label: '标签', value: comic.tags.slice(0, 4).join(' / '), tone: 'pink' },
+    { label: '标签', value: displayComicTags(comic.tags, comic.subtitle), tone: 'pink' },
     { label: '状态', value: status ?? '', tone: 'purple' },
-    { label: '页数', value: pages ?? '', tone: 'orange' },
     { label: '描述', value: description ?? '', tone: 'orange' }
   ].filter((row) => row.value.trim().length > 0) as ComicMetaRow[]
+}
+
+function displayComicTags(tags: string[], author?: string | null) {
+  const authorTokens = new Set(
+    (author ?? '')
+      .split(/[、,，/]/)
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean)
+  )
+  return tags
+    .map((tag) => tag.trim())
+    .map((tag) => {
+      const separatorIndex = tag.search(/[:：]/)
+      if (separatorIndex <= 0) return tag
+      const namespace = tag.slice(0, separatorIndex).trim().toLowerCase()
+      const value = tag.slice(separatorIndex + 1).trim()
+      if (/^(作者|author|authors|artist|artists|更新|update|updated|状态|狀態|status|state|来源|來源|source|页数|頁數|pages?|page|语言|語言|language|上传者|上傳者|uploader)$/i.test(namespace)) {
+        return null
+      }
+      if (/^(标签|標籤|tag|tags|类型|類型|type|genre|genres|category|分类|分類)$/i.test(namespace)) {
+        return value
+      }
+      return tag
+    })
+    .filter((tag) => {
+      if (!tag) return false
+      const normalized = tag.toLowerCase()
+      const value = tag.includes(':') || tag.includes('：') ? tag.split(/[:：]/).slice(1).join(':').trim() : tag
+      if (!value) return false
+      if (authorTokens.has(value.toLowerCase())) return false
+      if (/^(连载中|連載中|连载|連載|已完结|已完結|完结|完結)$/i.test(value)) return false
+      if (/^\d{4}[-/.]\d{1,2}([-/.\s]\d{1,2})?$/.test(value)) return false
+      return !/^(author|update|status|source)$/.test(normalized)
+    })
+    .slice(0, 4)
+    .join(' / ')
 }
 
 function latestChapterTitle(raw: unknown) {
@@ -349,19 +383,12 @@ function latestChapterTitle(raw: unknown) {
 }
 
 function libraryItemMetaRows(item: LibraryItem): ComicMetaRow[] {
-  const progress = firstPresent([
-    item.progress_text,
-    item.episode_title,
-    item.page != null && item.max_page != null ? `${item.page}/${item.max_page}` : item.page != null ? String(item.page) : null
-  ])
   return [
     { label: '作者', value: firstPresent([item.author, item.subtitle]) ?? '', tone: 'blue' },
     { label: '更新', value: item.update_time ?? '', tone: 'cyan' },
     { label: '来源', value: firstPresent([item.source_name, item.source_key]) ?? '', tone: 'cyan' },
-    { label: '标签', value: item.tags.slice(0, 4).join(' / '), tone: 'pink' },
+    { label: '标签', value: displayComicTags(item.tags, item.author ?? item.subtitle), tone: 'pink' },
     { label: '状态', value: item.status ?? '', tone: 'purple' },
-    { label: '进度', value: progress ?? '', tone: 'green' },
-    { label: '页数', value: item.pages_text ?? (item.max_page != null ? String(item.max_page) : ''), tone: 'orange' },
     { label: '描述', value: item.description ?? '', tone: 'orange' }
   ].filter((row) => row.value.trim().length > 0) as ComicMetaRow[]
 }
@@ -2442,12 +2469,6 @@ function UpdatesView({
   const [selectedFolder, setSelectedFolder] = useState(activeFolder ?? folders[0]?.name ?? '')
   const visibleItems =
     activeList === 'updated' ? data.updated : activeList === 'unread' ? data.unread : data.ended
-  const visibleTotal =
-    activeList === 'updated'
-      ? data.updated_total
-      : activeList === 'unread'
-        ? data.unread_total
-        : data.ended_total
   const activeFolderTitle =
     activeFolder == null
       ? '未配置'
@@ -2538,7 +2559,7 @@ function UpdatesView({
               aria-selected={activeList === 'updated'}
               onClick={() => setActiveList('updated')}
             >
-              更新
+              更新 {data.updated_total}
             </button>
             <button
               className={activeList === 'unread' ? 'selected' : ''}
@@ -2547,7 +2568,7 @@ function UpdatesView({
               aria-selected={activeList === 'unread'}
               onClick={() => setActiveList('unread')}
             >
-              未读
+              未读 {data.unread_total}
             </button>
             <button
               className={activeList === 'ended' ? 'selected' : ''}
@@ -2556,7 +2577,7 @@ function UpdatesView({
               aria-selected={activeList === 'ended'}
               onClick={() => setActiveList('ended')}
             >
-              已完结
+              已完结 {data.ended_total}
             </button>
           </div>
           <section className="follow-tab-body" aria-label={`追更${activeList}`}>
@@ -2591,7 +2612,6 @@ function UpdatesView({
                 onSelect={(item) => onOpenComic(libraryItemToOpenRequest(item))}
               />
             )}
-            <span className="follow-tab-count">{visibleTotal}</span>
           </section>
         </>
       ) : null}
@@ -2939,8 +2959,6 @@ function LibraryGrid({
           cover={item.cover ?? null}
           rows={libraryItemMetaRows(item)}
           favorite={favorite}
-          page={item.page}
-          maxPage={item.max_page}
           currentTitle={item.episode_title}
           latestTitle={item.latest_title}
           onClick={() => onSelect?.(item)}
@@ -3010,19 +3028,6 @@ function ComicMetaRows({ rows, limit = 6 }: { rows: ComicMetaRow[]; limit?: numb
   )
 }
 
-function ReadingProgressBadge({ page, maxPage }: { page?: number | null; maxPage?: number | null }) {
-  if (page == null) return null
-  if (maxPage != null && page >= maxPage) {
-    return <span className="reading-progress-badge complete">✓</span>
-  }
-  return (
-    <span className="reading-progress-badge">
-      <strong>{page}</strong>
-      {maxPage != null ? <small>/{maxPage}</small> : null}
-    </span>
-  )
-}
-
 function EpisodeProgressBadge({
   currentTitle,
   latestTitle
@@ -3045,8 +3050,6 @@ function DetailedComicTile({
   rows,
   onClick,
   favorite = false,
-  page,
-  maxPage,
   currentTitle,
   latestTitle
 }: {
@@ -3055,8 +3058,6 @@ function DetailedComicTile({
   rows: ComicMetaRow[]
   onClick: () => void
   favorite?: boolean
-  page?: number | null
-  maxPage?: number | null
   currentTitle?: string | null
   latestTitle?: string | null
 }) {
@@ -3064,14 +3065,13 @@ function DetailedComicTile({
     <button className="comic-tile" type="button" title={title} onClick={onClick}>
       <div className="comic-tile-cover">
         <CoverImage url={cover} iconSize={22} />
-        <div className="comic-cover-status">
-          {favorite ? (
+        {favorite ? (
+          <div className="comic-cover-status">
             <span className="favorite-status-badge" aria-label="已收藏">
               <Bookmark size={15} fill="currentColor" />
             </span>
-          ) : null}
-          <ReadingProgressBadge page={page} maxPage={maxPage} />
-        </div>
+          </div>
+        ) : null}
         <EpisodeProgressBadge currentTitle={currentTitle} latestTitle={latestTitle} />
       </div>
       <div className="comic-tile-main">

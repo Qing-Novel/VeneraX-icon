@@ -666,20 +666,6 @@ button {
   min-width: 0;
 }
 
-.follow-tab-count {
-  position: absolute;
-  top: 10px;
-  right: 8px;
-  min-width: 28px;
-  padding: 2px 8px;
-  border-radius: 8px;
-  color: var(--primary);
-  background: var(--primary-soft);
-  font-size: 12px;
-  font-weight: 700;
-  text-align: center;
-}
-
 .folder-dialog-list {
   display: grid;
   gap: 6px;
@@ -811,8 +797,7 @@ button {
   border-radius: 4px;
 }
 
-.favorite-status-badge,
-.reading-progress-badge {
+.favorite-status-badge {
   display: grid;
   place-items: center;
   height: 24px;
@@ -822,33 +807,6 @@ button {
 
 .favorite-status-badge {
   background: #4caf50;
-}
-
-.reading-progress-badge {
-  grid-template-columns: auto auto;
-  align-items: end;
-  padding: 0 4px;
-  background: rgba(33, 150, 243, 0.9);
-  line-height: 1;
-}
-
-.reading-progress-badge strong {
-  display: inline;
-  min-width: 0;
-  color: white;
-  font-size: 13px;
-  line-height: 1;
-}
-
-.reading-progress-badge small {
-  color: white;
-  font-size: 9px;
-  line-height: 1.1;
-}
-
-.reading-progress-badge.complete {
-  font-size: 16px;
-  font-weight: 800;
 }
 
 .episode-progress-badge {
@@ -933,15 +891,6 @@ button {
   line-height: 1.35;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
-}
-
-.comic-tile .reading-progress-badge strong {
-  display: inline;
-  min-width: 0;
-  color: white;
-  font-size: 13px;
-  line-height: 1;
-  -webkit-line-clamp: unset;
 }
 
 .comic-tile.compact strong {

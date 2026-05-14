@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:venera/components/components.dart';
 import 'package:venera/foundation/app.dart';
 import 'package:venera/foundation/appdata.dart';
+import 'package:venera/foundation/comic_state_repository.dart';
 import 'package:venera/foundation/comic_type.dart';
 import 'package:venera/foundation/favorites.dart';
 import 'package:venera/foundation/follow_update_tasks.dart';
@@ -272,9 +273,9 @@ class _FollowUpdatesPageState extends AutomaticGlobalState<FollowUpdatesPage> {
           Material(
             child: AppTabBar(
               tabs: [
-                Tab(text: "Updates".tl),
-                Tab(text: "Unread".tl),
-                Tab(text: "Ended".tl),
+                Tab(text: "${"Updates".tl} ${updatedComics.length}"),
+                Tab(text: "${"Unread".tl} ${unreadComics.length}"),
+                Tab(text: "${"Ended".tl} ${completedComics.length}"),
               ],
             ),
           ),
@@ -300,14 +301,24 @@ class _FollowUpdatesPageState extends AutomaticGlobalState<FollowUpdatesPage> {
   }
 
   bool _isReadCompleted(FavoriteItemWithUpdateInfo comic) {
-    var history = HistoryManager().find(
-      comic.id,
-      ComicType.fromKey(comic.sourceKey),
-    );
-    return history != null &&
-        history.maxPage != null &&
-        history.maxPage! > 0 &&
-        history.page >= history.maxPage!;
+    final status = const ComicStateRepository()
+        .displayInfoFor(comic)
+        .status
+        ?.trim()
+        .toLowerCase();
+    if (status == null || status.isEmpty) {
+      return false;
+    }
+    if (status.contains("连载") ||
+        status.contains("連載") ||
+        status.contains("ongoing")) {
+      return false;
+    }
+    return status.contains("完结") ||
+        status.contains("完結") ||
+        status.contains("completed") ||
+        status.contains("finished") ||
+        status.contains("ended");
   }
 
   bool _isUnread(FavoriteItemWithUpdateInfo comic) {
