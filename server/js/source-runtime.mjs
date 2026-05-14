@@ -154,6 +154,34 @@ function randomInt(min, max) {
   return Math.floor(Math.random() * (floorMax - floorMin + 1)) + floorMin
 }
 
+const UUID_EPOCH_OFFSET_MS = 12219292800000n
+const uuidNodeBytes = crypto.randomBytes(6)
+uuidNodeBytes[0] |= 0x01
+const uuidClockSeed = crypto.randomBytes(2)
+const uuidClockSequence = ((uuidClockSeed[0] << 8) | uuidClockSeed[1]) & 0x3fff
+let lastUuidTimestamp = 0n
+
+function hex(value, width) {
+  return value.toString(16).padStart(width, '0')
+}
+
+function createUuid() {
+  let timestamp = (BigInt(Date.now()) + UUID_EPOCH_OFFSET_MS) * 10000n
+  if (timestamp <= lastUuidTimestamp) {
+    timestamp = lastUuidTimestamp + 1n
+  }
+  lastUuidTimestamp = timestamp
+
+  const timeLow = Number(timestamp & 0xffffffffn)
+  const timeMid = Number((timestamp >> 32n) & 0xffffn)
+  const timeHighAndVersion = Number(((timestamp >> 48n) & 0x0fffn) | 0x1000n)
+  const clockSeqHigh = ((uuidClockSequence >> 8) & 0x3f) | 0x80
+  const clockSeqLow = uuidClockSequence & 0xff
+  const node = Array.from(uuidNodeBytes, (byte) => hex(byte, 2)).join('')
+
+  return `${hex(timeLow, 8)}-${hex(timeMid, 4)}-${hex(timeHighAndVersion, 4)}-${hex(clockSeqHigh, 2)}${hex(clockSeqLow, 2)}-${node}`
+}
+
 function json(value) {
   process.stdout.write(`${JSON.stringify(value)}\n`)
 }
@@ -733,6 +761,7 @@ function createContext() {
     HtmlNode,
     log,
     Network,
+    createUuid,
     randomInt,
     URL,
     URLSearchParams,
