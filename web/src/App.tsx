@@ -94,6 +94,7 @@ import { ReloadPrompt } from './ReloadPrompt'
 import { ThemeProvider } from './theme/ThemeProvider'
 import { SnackbarHost } from './ui/Snackbar'
 import { Ripple } from './ui/Ripple'
+import { IconButton } from './ui/IconButton'
 import { AppDataProvider } from './context/AppDataContext'
 import { LibraryProvider } from './context/LibraryContext'
 import { TasksProvider } from './context/TasksContext'
@@ -985,8 +986,7 @@ function TopBar({
         {actionNav.map((item) => {
           const Icon = item.icon
           return (
-            <button
-              className="top-action-button"
+            <IconButton
               key={item.key}
               type="button"
               title={item.label}
@@ -994,14 +994,14 @@ function TopBar({
               onClick={() => onSelect(item.key)}
             >
               <Icon size={20} />
-            </button>
+            </IconButton>
           )
         })}
         <StatusPill ok={isNormal} text={isNormal ? '正常' : '异常'} />
         {lastUpdated ? <span className="muted-text">{lastUpdated}</span> : null}
-        <button className="icon-button" type="button" onClick={onRefresh} aria-label="刷新">
+        <IconButton type="button" onClick={onRefresh} aria-label="刷新">
           {loading ? <Loader2 className="spin" size={18} /> : <RefreshCw size={18} />}
-        </button>
+        </IconButton>
       </div>
     </header>
   )
