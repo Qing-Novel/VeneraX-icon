@@ -98,6 +98,7 @@ import { IconButton } from './ui/IconButton'
 import { CircularProgress, LinearProgress } from './ui/ProgressIndicator'
 import { Switch } from './ui/Switch'
 import { Menu } from './ui/Menu'
+import { TextField } from './ui/TextField'
 import { ComicTile as ComicTilePrimitive } from './components/ComicTile'
 import { AppDataProvider } from './context/AppDataContext'
 import { LibraryProvider } from './context/LibraryContext'
@@ -3662,19 +3663,27 @@ function WebDavPanel({ onImportComplete }: { onImportComplete: () => void | Prom
   return (
     <Panel title="WebDAV" action={config?.endpoint_url ? '已配置' : undefined}>
       <form className="webdav-form" onSubmit={handleSave}>
-        <input
+        <TextField
           value={endpointUrl}
           placeholder="WebDAV 地址"
           onChange={(event) => setEndpointUrl(event.target.value)}
         />
-        <input value={username} placeholder="用户名" onChange={(event) => setUsername(event.target.value)} />
-        <input
+        <TextField
+          value={username}
+          placeholder="用户名"
+          onChange={(event) => setUsername(event.target.value)}
+        />
+        <TextField
           value={password}
           placeholder={config?.password_configured ? '密码已配置' : '密码'}
           type="password"
           onChange={(event) => setPassword(event.target.value)}
         />
-        <input value={rootPath} placeholder="根路径" onChange={(event) => setRootPath(event.target.value)} />
+        <TextField
+          value={rootPath}
+          placeholder="根路径"
+          onChange={(event) => setRootPath(event.target.value)}
+        />
         <button className="primary-button" type="submit" disabled={busy || !endpointUrl.trim()}>
           保存
         </button>
