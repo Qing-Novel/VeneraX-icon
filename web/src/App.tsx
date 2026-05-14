@@ -1442,15 +1442,14 @@ function ComicDetailPage({
           <section className="detail-section">
             <div className="detail-section-header">
               <h3>章节</h3>
-              <button
-                className="icon-button"
+              <IconButton
                 type="button"
                 aria-label="章节排序"
                 title="章节排序"
                 onClick={() => setChaptersReversed((value) => !value)}
               >
                 <ChevronDown className={chaptersReversed ? 'rotated' : ''} size={18} />
-              </button>
+              </IconButton>
             </div>
             {comic.episodes.length === 0 ? (
               <EmptyLine icon={BookOpen} text="暂无章节" />
