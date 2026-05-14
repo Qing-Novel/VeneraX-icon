@@ -2356,9 +2356,9 @@ function FavoritesView({
                 <Button variant="filled" disabled={!newFolderTitle.trim() || folderBusy} onClick={handleAddFolder}>
                   {folderBusy ? '创建中' : '确定'}
                 </Button>
-                <button className="icon-text-button subtle" style={{ minHeight: '32px', fontSize: '13px' }} onClick={() => setAddingFolder(false)}>
+                <Button variant="text" onClick={() => setAddingFolder(false)}>
                   取消
-                </button>
+                </Button>
               </div>
             </div>
           ) : (
@@ -3687,25 +3687,23 @@ function WebDavPanel({ onImportComplete }: { onImportComplete: () => void | Prom
         <Button variant="filled" type="submit" disabled={busy || !endpointUrl.trim()}>
           保存
         </Button>
-        <button className="icon-text-button subtle" type="button" disabled={busy} onClick={() => void openPath('')}>
-          <FolderOpen size={16} />
+        <Button variant="text" type="button" disabled={busy} onClick={() => void openPath('')} leading={<FolderOpen size={16} />}>
           浏览
-        </button>
+        </Button>
       </form>
       <div className="webdav-actions">
-        <button className="icon-text-button subtle" type="button" disabled={busy} onClick={() => void createLocalBackup()}>
-          <Save size={16} />
+        <Button variant="text" type="button" disabled={busy} onClick={() => void createLocalBackup()} leading={<Save size={16} />}>
           创建本地备份
-        </button>
-        <button
-          className="icon-text-button subtle"
+        </Button>
+        <Button
+          variant="text"
           type="button"
           disabled={busy || !config?.endpoint_url}
           onClick={() => void uploadBackup()}
+          leading={<Upload size={16} />}
         >
-          <Upload size={16} />
           备份并上传
-        </button>
+        </Button>
       </div>
       {message ? <div className="data-row">{message}</div> : null}
       {entries.length > 0 || currentPath ? (
