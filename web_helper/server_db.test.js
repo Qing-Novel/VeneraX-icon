@@ -580,6 +580,16 @@ test("server-db upload builds WebDAV backup from helper-side databases", async (
       pass: "pass",
       fileName: "1700000000200.venera",
       appdata: { settings: { theme: "dark" } },
+      comicSources: [
+        {
+          name: "demo.js",
+          dataBase64: Buffer.from("function demo() {}").toString("base64"),
+        },
+        {
+          name: "demo.data",
+          dataBase64: Buffer.from("{\"ok\":true}").toString("base64"),
+        },
+      ],
     });
     assert.equal(uploadResponse.status, 200);
     const uploadPayload = await uploadResponse.json();
@@ -587,9 +597,13 @@ test("server-db upload builds WebDAV backup from helper-side databases", async (
     assert.equal(uploadPayload.databaseCount, 1);
     assert.equal(uploadPayload.entries.includes("appdata.json"), true);
     assert.equal(uploadPayload.entries.includes("history.db"), true);
+    assert.equal(uploadPayload.entries.includes("comic_source/demo.js"), true);
+    assert.equal(uploadPayload.entries.includes("comic_source/demo.data"), true);
     assert.equal(uploadPayload.fileName, "1700000000200.venera");
     assert.equal(Buffer.isBuffer(uploaded), true);
     assert.equal(uploaded.includes(Buffer.from('"theme": "dark"')), true);
+    assert.equal(uploaded.includes(Buffer.from("function demo() {}")), true);
+    assert.equal(uploaded.includes(Buffer.from("{\"ok\":true}")), true);
 
     const extractResponse = await fetch(`${helperUrl}/sync/webdav/extract-db`, {
       method: "POST",

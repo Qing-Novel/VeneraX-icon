@@ -2516,7 +2516,25 @@ function writeServerDbAppdata(profileRoot, data) {
   return appdataBytes;
 }
 
-function buildServerDbBackup(profileRoot, appdataPayload) {
+function normalizeComicSourceBackupEntries(rawSources) {
+  if (!Array.isArray(rawSources)) {
+    return [];
+  }
+  const result = [];
+  for (const source of rawSources) {
+    if (!source || typeof source !== "object") continue;
+    const name = String(source.name || "").trim();
+    if (!/^[^/\\]+\.(?:js|data)$/.test(name)) {
+      throw createHttpError(400, "Invalid comic source backup entry");
+    }
+    const dataBase64 = String(source.dataBase64 || "");
+    const data = Buffer.from(dataBase64, "base64");
+    result.push({ name: `comic_source/${name}`, data });
+  }
+  return result;
+}
+
+function buildServerDbBackup(profileRoot, appdataPayload, comicSourcesPayload) {
   const entries = [];
   let databaseCount = 0;
   let appdataBytes = null;
@@ -2533,6 +2551,8 @@ function buildServerDbBackup(profileRoot, appdataPayload) {
   if (appdataBytes) {
     entries.push({ name: "appdata.json", data: appdataBytes });
   }
+
+  entries.push(...normalizeComicSourceBackupEntries(comicSourcesPayload));
 
   for (const entryName of serverDbEntryNames) {
     const filePath = serverDbEntryPath(profileRoot, entryName);
@@ -2928,7 +2948,11 @@ async function handleServerDbRoute({
           .map((name) => normalizeWebDavBackupName(name, { required: false }))
           .filter((name) => name != null && name !== "latest.venera")
       : [];
-    const backup = buildServerDbBackup(profileRoot, payload.appdata);
+    const backup = buildServerDbBackup(
+      profileRoot,
+      payload.appdata,
+      payload.comicSources,
+    );
 
     await webDavRequest({
       config,

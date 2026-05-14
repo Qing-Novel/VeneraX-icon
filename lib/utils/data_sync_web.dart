@@ -134,6 +134,35 @@ class DataSync with ChangeNotifier {
     return data;
   }
 
+  Future<List<Map<String, String>>> _comicSourceEntriesForSync() async {
+    final dir = Directory(FilePath.join(App.dataPath, 'comic_source'));
+    if (!dir.existsSync()) {
+      return const [];
+    }
+    final result = <Map<String, String>>[];
+    for (final entity in dir.listSync()) {
+      if (entity is! File) {
+        continue;
+      }
+      final name = entity.name;
+      if (!name.endsWith('.js') && !name.endsWith('.data')) {
+        continue;
+      }
+      try {
+        result.add({
+          'name': name,
+          'dataBase64': base64Encode(await entity.readAsBytes()),
+        });
+      } catch (e, s) {
+        Log.warning(
+          'Upload Data',
+          'Failed to include comic source $name: $e\n$s',
+        );
+      }
+    }
+    return result;
+  }
+
   Map<String, dynamic> _webDavPayload(List<String> config) {
     if (_serverWebDavConfig != null) {
       return {};
@@ -410,6 +439,7 @@ class DataSync with ChangeNotifier {
           'profile': _serverDbProfile,
           'fileName': fileName,
           'appdata': _appdataJsonForSync(),
+          'comicSources': await _comicSourceEntriesForSync(),
         });
         var files =
             (uploadResult['files'] as List?)
