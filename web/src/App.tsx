@@ -983,20 +983,22 @@ function TopBar({
         <p>{isNormal ? `服务端 ${health.version}` : '服务或数据异常'}</p>
       </div>
       <div className="top-actions">
-        {actionNav.map((item) => {
-          const Icon = item.icon
-          return (
-            <IconButton
-              key={item.key}
-              type="button"
-              title={item.label}
-              aria-label={item.label}
-              onClick={() => onSelect(item.key)}
-            >
-              <Icon size={20} />
-            </IconButton>
-          )
-        })}
+        <div className="top-actions-mobile">
+          {actionNav.map((item) => {
+            const Icon = item.icon
+            return (
+              <IconButton
+                key={item.key}
+                type="button"
+                title={item.label}
+                aria-label={item.label}
+                onClick={() => onSelect(item.key)}
+              >
+                <Icon size={20} />
+              </IconButton>
+            )
+          })}
+        </div>
         <StatusPill ok={isNormal} text={isNormal ? '正常' : '异常'} />
         {lastUpdated ? <span className="muted-text">{lastUpdated}</span> : null}
         <IconButton type="button" onClick={onRefresh} aria-label="刷新">

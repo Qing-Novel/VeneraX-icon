@@ -1886,6 +1886,13 @@ button {
    set dynamically by ThemeProvider and aliased to legacy --bg/--surface/etc.
    at the top of this file. */
 
+.top-actions-mobile { display: contents; }
+@media (min-width: 861px) {
+  /* SideNav is visible on desktop and already shows actionNav (search/tasks/settings).
+     Hide TopBar copies to match Flutter app's NaviPane behavior. */
+  .top-actions-mobile { display: none; }
+}
+
 body,
 .app-shell {
   background: var(--bg);
