@@ -1,7 +1,8 @@
 import { writeFile } from 'node:fs/promises'
 
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024
-const [rawUrl, imagePath, typePath] = process.argv.slice(2)
+const defaultImageAccept = 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
+const [rawUrl, imagePath, typePath, rawConfig = '{}'] = process.argv.slice(2)
 
 function finish(payload) {
   process.stdout.write(JSON.stringify(payload))
@@ -38,6 +39,56 @@ function sniff(bytes) {
   return ''
 }
 
+function parseConfig(value) {
+  try {
+    const parsed = JSON.parse(value || '{}')
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function helperProxyUrl(config) {
+  const explicit = config.proxyUrl || config.proxy_url || process.env.VENERA_IMAGE_PROXY_URL || ''
+  if (explicit) return explicit
+  const helperBase = config.helperUrl || config.helper_url || process.env.VENERA_WEB_HELPER_URL || process.env.VENERA_HELPER_URL || ''
+  if (!helperBase) return ''
+  return new URL('/proxy', helperBase).toString()
+}
+
+function requestHeaders(config) {
+  const imageConfig = config.imageConfig || config.image_config || {}
+  const headers = {
+    Accept: defaultImageAccept,
+    'User-Agent': 'Venera-WebPWA/0.1',
+    ...(imageConfig.headers || {}),
+    ...(config.headers || {})
+  }
+  const userAgent = config.userAgent || config.user_agent || imageConfig.userAgent || imageConfig.user_agent
+  const referer = config.referer || config.referrer || imageConfig.referer || imageConfig.referrer
+  const cookie = config.cookie || imageConfig.cookie
+  if (userAgent) headers['User-Agent'] = String(userAgent)
+  if (referer) headers.Referer = String(referer)
+  if (cookie) headers.Cookie = String(cookie)
+  return headers
+}
+
+async function fetchImage(url, headers, signal, proxyUrl) {
+  if (!proxyUrl) return fetch(url, { headers, signal })
+  const response = await fetch(proxyUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url: String(url), method: 'GET', headers, bytes: true }),
+    signal
+  })
+  if (!response.ok) return response
+  const payload = await response.json()
+  return new Response(Buffer.from(payload.bodyBase64 || '', 'base64'), {
+    status: payload.status,
+    headers: payload.headers || {}
+  })
+}
+
 try {
   if (!rawUrl || !imagePath || !typePath) {
     fail('missing image fetch arguments')
@@ -50,15 +101,10 @@ try {
     process.exit(0)
   }
 
+  const config = parseConfig(rawConfig)
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 25000)
-  const response = await fetch(url, {
-    headers: {
-      Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-      'User-Agent': 'Venera-WebPWA/0.1'
-    },
-    signal: controller.signal
-  })
+  const response = await fetchImage(url, requestHeaders(config), controller.signal, helperProxyUrl(config))
   clearTimeout(timer)
 
   if (!response.ok) {

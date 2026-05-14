@@ -15,6 +15,9 @@ import { URL } from "node:url";
 const defaultProxyUserAgent =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
   "(KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36";
+const maxImageBytes = 15 * 1024 * 1024;
+const defaultImageAccept =
+  "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8";
 
 const canonicalForwardHeaders = new Map([
   ["authorization", "Authorization"],
@@ -1247,6 +1250,81 @@ function payloadBody(payload) {
   return Buffer.from(JSON.stringify(data));
 }
 
+function imageTypeFromHeader(value) {
+  const contentType = String(value || "").split(";")[0].trim().toLowerCase();
+  return contentType.startsWith("image/") ? contentType : "";
+}
+
+function sniffImageType(buffer) {
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47 &&
+    buffer[4] === 0x0d &&
+    buffer[5] === 0x0a &&
+    buffer[6] === 0x1a &&
+    buffer[7] === 0x0a
+  ) {
+    return "image/png";
+  }
+  const head = buffer.subarray(0, 256).toString("utf8").toLowerCase();
+  if (head.startsWith("gif87a") || head.startsWith("gif89a")) return "image/gif";
+  if (head.startsWith("riff") && head.slice(8, 12) === "webp") return "image/webp";
+  if (head.includes("<svg")) return "image/svg+xml";
+  if (head.slice(4, 8) === "ftyp" && head.includes("avif")) return "image/avif";
+  return "";
+}
+
+function parseMaybeJsonObject(value) {
+  if (!value) return {};
+  if (typeof value === "object") return value;
+  try {
+    const parsed = JSON.parse(String(value));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function imagePayloadFromQuery(searchParams) {
+  return {
+    url: searchParams.get("url") || "",
+    headers: parseMaybeJsonObject(searchParams.get("headers")),
+    imageConfig: parseMaybeJsonObject(
+      searchParams.get("imageConfig") ||
+        searchParams.get("image_config") ||
+        searchParams.get("config"),
+    ),
+    referer: searchParams.get("referer") || searchParams.get("referrer") || "",
+    cookie: searchParams.get("cookie") || "",
+    userAgent: searchParams.get("userAgent") || searchParams.get("user_agent") || "",
+  };
+}
+
+function normalizeImageProxyPayload(payload) {
+  const imageConfig = parseMaybeJsonObject(
+    payload?.imageConfig || payload?.image_config || payload?.config,
+  );
+  const merged = { ...imageConfig, ...(payload || {}) };
+  const headers = {
+    Accept: defaultImageAccept,
+    "User-Agent": defaultProxyUserAgent,
+    ...filteredHeaders(imageConfig.headers || {}),
+    ...filteredHeaders(payload?.headers || {}),
+  };
+  const userAgent = merged.userAgent || merged.user_agent;
+  const referer = merged.referer || merged.referrer;
+  const cookie = merged.cookie;
+  if (userAgent) headers["User-Agent"] = headerToString(userAgent);
+  if (referer) headers.Referer = headerToString(referer);
+  if (cookie) headers.Cookie = headerToString(cookie);
+  return { url: String(merged.url || ""), headers };
+}
+
 // --- venera-fetch sidecar integration ---
 //
 // The Rust sidecar at $VENERA_FETCH_SIDECAR (default http://127.0.0.1:9876)
@@ -1570,6 +1648,60 @@ async function handleQueryProxy(
   delete headers["content-encoding"];
   headers["content-length"] = String(body.length);
   res.writeHead(response.status, headers);
+  res.end(body);
+}
+
+async function handleImageProxy(
+  req,
+  res,
+  parsedUrl,
+  rawBody,
+  cookieJar,
+  persistCookieJar,
+  recordProxyRequest,
+) {
+  if (req.method !== "GET" && req.method !== "POST") {
+    sendJson(res, 405, { error: "Method not allowed" });
+    return;
+  }
+
+  const payload =
+    req.method === "POST"
+      ? parseJsonBody(rawBody, "Invalid image proxy payload")
+      : imagePayloadFromQuery(parsedUrl.searchParams);
+  const { url, headers } = normalizeImageProxyPayload(payload);
+  const response = await proxyFetch({
+    url,
+    method: "GET",
+    headers,
+    cookieJar,
+    persistCookieJar,
+    recordProxyRequest,
+  });
+  const body = Buffer.from(await response.arrayBuffer());
+  if (response.status < 200 || response.status >= 300) {
+    sendJson(res, 502, { error: `upstream returned ${response.status}` });
+    return;
+  }
+  const contentLength = Number(response.headers.get("content-length") || 0);
+  if (contentLength > maxImageBytes || body.length > maxImageBytes) {
+    sendJson(res, 502, { error: "image is too large" });
+    return;
+  }
+  const contentType =
+    imageTypeFromHeader(response.headers.get("content-type")) ||
+    sniffImageType(body);
+  if (!contentType) {
+    sendJson(res, 502, { error: "upstream did not return an image" });
+    return;
+  }
+
+  res.writeHead(200, {
+    "Content-Type": contentType,
+    "Content-Length": String(body.length),
+    "Cache-Control": "public, max-age=604800, immutable",
+    "x-venera-cache": "miss",
+  });
   res.end(body);
 }
 
@@ -3028,6 +3160,20 @@ export function createServer(options = {}) {
             recordProxyRequest,
           );
         }
+        return;
+      }
+
+      if (parsedUrl.pathname === "/api/image") {
+        const rawBody = req.method === "POST" ? await readBody(req) : Buffer.alloc(0);
+        await handleImageProxy(
+          req,
+          res,
+          parsedUrl,
+          rawBody,
+          cookieJar,
+          persistCookieJar,
+          recordProxyRequest,
+        );
         return;
       }
 

@@ -195,7 +195,64 @@ function normalizeHeaders(headers) {
   return Object.fromEntries(headers.entries())
 }
 
+function helperProxyUrl() {
+  const explicit = process.env.VENERA_SOURCE_PROXY_URL || ''
+  if (explicit) return explicit
+  const helperBase = process.env.VENERA_WEB_HELPER_URL || process.env.VENERA_HELPER_URL || ''
+  if (!helperBase) return ''
+  return new URL('/proxy', helperBase).toString()
+}
+
+const sourceProxyUrl = helperProxyUrl()
+
+function requestHeaders(headers) {
+  if (!headers) return {}
+  if (headers instanceof Headers) return Object.fromEntries(headers.entries())
+  if (Array.isArray(headers)) return Object.fromEntries(headers)
+  return { ...headers }
+}
+
+function requestBodyData(data) {
+  if (data == null) return undefined
+  if (typeof data === 'string') return data
+  if (data instanceof ArrayBuffer) {
+    return { type: 'base64', value: Buffer.from(data).toString('base64') }
+  }
+  if (ArrayBuffer.isView(data)) {
+    return {
+      type: 'base64',
+      value: Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString('base64')
+    }
+  }
+  return String(data)
+}
+
+async function proxyRequest(method, url, headers = {}, data = null) {
+  const response = await fetch(sourceProxyUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      url: String(url),
+      method,
+      headers: requestHeaders(headers),
+      data: requestBodyData(data)
+    })
+  })
+  if (!response.ok) {
+    throw new Error(`helper proxy returned ${response.status}`)
+  }
+  return await response.json()
+}
+
 async function sendRequest(method, url, headers = {}, data = null) {
+  if (sourceProxyUrl) {
+    const payload = await proxyRequest(method, url, headers, data)
+    return {
+      status: payload.status,
+      headers: payload.headers || {},
+      body: payload.body ?? ''
+    }
+  }
   const response = await fetch(url, {
     method,
     headers,

@@ -1,15 +1,19 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
+import { execFile } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 import { deflateRawSync, gzipSync } from "node:zlib";
 
 import { createServer } from "./server.js";
+
+const execFileAsync = promisify(execFile);
 
 function listen(server) {
   return new Promise((resolve) => {
@@ -887,6 +891,141 @@ test("json proxy appends helper cookie jar to explicit cookie header", async () 
     ).json();
     assert.equal(debugPayload.requests[0].cookieSource, "request+helper");
     assert.deepEqual(debugPayload.requests[0].cookieNames, ["token", "sid"]);
+  } finally {
+    await close(helper);
+    await close(upstream);
+  }
+});
+
+test("source runtime Network uses helper proxy and shared cookie jar", async () => {
+  let seenCookie = "";
+  let seenSourceHeader = "";
+  const upstream = createHttpServer((req, res) => {
+    if (req.url === "/login") {
+      res.writeHead(200, { "Set-Cookie": "sid=runtime; Path=/" });
+      res.end("logged");
+      return;
+    }
+    seenCookie = req.headers.cookie || "";
+    seenSourceHeader = req.headers["x-source-runtime"] || "";
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end(seenCookie);
+  });
+  const upstreamUrl = await listen(upstream);
+  const helper = createServer();
+  const helperUrl = await listen(helper);
+  const sourceDir = await mkdtemp(join(tmpdir(), "venera-source-runtime-"));
+  const sourcePath = join(sourceDir, "source.js");
+
+  try {
+    await writeFile(
+      sourcePath,
+      `
+class TestSource extends ComicSource {
+  constructor() {
+    super();
+    this.search = {
+      load: async (keyword) => {
+        await Network.get(keyword + "/login");
+        const response = await Network.get(keyword + "/profile", {
+          "X-Source-Runtime": "yes"
+        });
+        return {
+          maxPage: 1,
+          comics: [{ id: "cookie", title: response.body }]
+        };
+      }
+    };
+  }
+}
+`,
+    );
+
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [
+        resolve("..", "server", "js", "source-runtime.mjs"),
+        "search",
+        sourcePath,
+        upstreamUrl,
+        "1",
+      ],
+      {
+        cwd: process.cwd(),
+        env: { ...process.env, VENERA_WEB_HELPER_URL: helperUrl },
+      },
+    );
+    const payload = JSON.parse(stdout);
+    assert.equal(payload.ok, true);
+    assert.equal(payload.data.comics[0].title, "sid=runtime");
+    assert.equal(seenCookie, "sid=runtime");
+    assert.equal(seenSourceHeader, "yes");
+
+    const debugPayload = await (
+      await fetch(`${helperUrl}/debug/proxy-requests`)
+    ).json();
+    assert.equal(debugPayload.requests.length, 2);
+    assert.equal(debugPayload.requests[0].cookieSource, "helper");
+    assert.deepEqual(debugPayload.requests[0].cookieNames, ["sid"]);
+  } finally {
+    await close(helper);
+    await close(upstream);
+    await rm(sourceDir, { recursive: true, force: true });
+  }
+});
+
+test("api image reuses proxy headers, referer, explicit cookie and helper cookies", async () => {
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lxv6GQAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  const seen = {};
+  const upstream = createHttpServer((req, res) => {
+    if (req.url === "/login") {
+      res.writeHead(200, { "Set-Cookie": "sid=image; Path=/" });
+      res.end("ok");
+      return;
+    }
+    seen.cookie = req.headers.cookie || "";
+    seen.referer = req.headers.referer || "";
+    seen.configHeader = req.headers["x-image-config"] || "";
+    seen.accept = req.headers.accept || "";
+    res.writeHead(200, {
+      "Content-Type": "image/png",
+      "Content-Length": String(png.length),
+    });
+    res.end(png);
+  });
+  const upstreamUrl = await listen(upstream);
+  const helper = createServer();
+  const helperUrl = await listen(helper);
+
+  try {
+    await fetch(`${helperUrl}/proxy`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: `${upstreamUrl}/login` }),
+    });
+    const response = await fetch(`${helperUrl}/api/image`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url: `${upstreamUrl}/cover.png`,
+        imageConfig: {
+          referer: `${upstreamUrl}/chapter/1`,
+          cookie: "manual=1",
+          headers: { "X-Image-Config": "yes" },
+        },
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "image/png");
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), png);
+    assert.equal(seen.cookie, "manual=1; sid=image");
+    assert.equal(seen.referer, `${upstreamUrl}/chapter/1`);
+    assert.equal(seen.configHeader, "yes");
+    assert.match(seen.accept, /image\/webp/);
   } finally {
     await close(helper);
     await close(upstream);
