@@ -2572,7 +2572,17 @@ function LibraryGrid({
   return (
     <div className="comic-grid">
       {items.map((item) => (
-        <ComicTile key={libraryItemKey(item)} item={item} onSelect={onSelect} />
+        <ComicTilePrimitive
+          key={libraryItemKey(item)}
+          data={{
+            id: item.comic_id,
+            sourceKey: item.source_key,
+            title: item.title,
+            cover: item.cover ?? null,
+            subtitle: item.subtitle ?? null,
+          }}
+          onOpen={() => onSelect?.(item)}
+        />
       ))}
     </div>
   )
