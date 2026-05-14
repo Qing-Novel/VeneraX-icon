@@ -1,4 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  type ChangeEvent,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  type TouchEvent as ReactTouchEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import {
   BookOpen,
   Bookmark,
@@ -175,6 +185,59 @@ const readerModeOptions = [
   { key: 'continuousLeftToRight', label: '连续 左到右' },
   { key: 'continuousRightToLeft', label: '连续 右到左' }
 ] satisfies Array<{ key: ReaderMode; label: string }>
+
+type ReaderSettingKey =
+  | 'readerMode'
+  | 'enableTapToTurnPages'
+  | 'reverseTapToTurnPages'
+  | 'enablePageAnimation'
+  | 'enableContinuousChapterReading'
+  | 'autoPageTurningInterval'
+  | 'readerScreenPicNumberForLandscape'
+  | 'readerScreenPicNumberForPortrait'
+  | 'showSingleImageOnFirstPage'
+  | 'readerScrollSpeed'
+  | 'enableDoubleTapToZoom'
+  | 'enableLongPressToZoom'
+  | 'limitImageWidth'
+  | 'showPageNumberInReader'
+  | 'showChapterComments'
+
+type ReaderSettingsSnapshot = {
+  readerMode: ReaderMode
+  enableTapToTurnPages: boolean
+  reverseTapToTurnPages: boolean
+  enablePageAnimation: boolean
+  enableContinuousChapterReading: boolean
+  autoPageTurningInterval: number
+  readerScreenPicNumberForLandscape: number
+  readerScreenPicNumberForPortrait: number
+  showSingleImageOnFirstPage: boolean
+  readerScrollSpeed: number
+  enableDoubleTapToZoom: boolean
+  enableLongPressToZoom: boolean
+  limitImageWidth: boolean
+  showPageNumberInReader: boolean
+  showChapterComments: boolean
+}
+
+const defaultReaderSettings: ReaderSettingsSnapshot = {
+  readerMode: 'galleryLeftToRight',
+  enableTapToTurnPages: true,
+  reverseTapToTurnPages: false,
+  enablePageAnimation: true,
+  enableContinuousChapterReading: true,
+  autoPageTurningInterval: 5,
+  readerScreenPicNumberForLandscape: 1,
+  readerScreenPicNumberForPortrait: 1,
+  showSingleImageOnFirstPage: false,
+  readerScrollSpeed: 1,
+  enableDoubleTapToZoom: true,
+  enableLongPressToZoom: true,
+  limitImageWidth: true,
+  showPageNumberInReader: true,
+  showChapterComments: true
+}
 
 const primaryNav = [
   { key: 'home', label: '首页', icon: Home },
@@ -545,6 +608,159 @@ function normalizeReaderMode(value: unknown): ReaderMode {
     : 'galleryLeftToRight'
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function boolSetting(value: unknown, fallback: boolean) {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'string') {
+    if (value === 'true') return true
+    if (value === 'false') return false
+  }
+  return fallback
+}
+
+function numberSetting(value: unknown, fallback: number, min: number, max: number) {
+  const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.min(max, Math.max(min, parsed))
+}
+
+function readerSettingTarget(values: Record<string, unknown>, comicId?: string | null, sourceKey?: string | null) {
+  const comicSpecificSettings = isRecord(values.comicSpecificSettings) ? values.comicSpecificSettings : null
+  const comicSettingsKeys = comicId && sourceKey ? [`${comicId}@${sourceKey}`, `${sourceKey}@${comicId}`] : []
+  const comicSettingsKey = comicSettingsKeys.find((key) => isRecord(comicSpecificSettings?.[key])) ?? null
+  const comicSettings = comicSettingsKey && isRecord(comicSpecificSettings?.[comicSettingsKey])
+    ? comicSpecificSettings[comicSettingsKey] as Record<string, unknown>
+    : null
+  if (comicSettings && boolSetting(comicSettings.enabled, false)) {
+    return { kind: 'comic' as const, rootKey: 'comicSpecificSettings', settingsKey: comicSettingsKey!, settings: comicSettings }
+  }
+
+  const deviceId = typeof values.deviceId === 'string' ? values.deviceId : ''
+  const deviceSpecificSettings = isRecord(values.deviceSpecificSettings) ? values.deviceSpecificSettings : null
+  const deviceSettings = deviceId && isRecord(deviceSpecificSettings?.[deviceId])
+    ? deviceSpecificSettings[deviceId]
+    : null
+  if (deviceId && deviceSettings && boolSetting(deviceSettings.enabled, false)) {
+    return { kind: 'device' as const, rootKey: 'deviceSpecificSettings', settingsKey: deviceId, settings: deviceSettings }
+  }
+
+  return { kind: 'global' as const, rootKey: null, settingsKey: null, settings: values }
+}
+
+function readReaderSetting(
+  values: Record<string, unknown>,
+  comicId: string | null,
+  sourceKey: string | null,
+  key: ReaderSettingKey
+) {
+  const target = readerSettingTarget(values, comicId, sourceKey)
+  const scopedValue = target.kind === 'global' ? undefined : target.settings[key]
+  return scopedValue ?? values[key]
+}
+
+function resolveReaderSettings(
+  values: Record<string, unknown>,
+  comicId: string | null = null,
+  sourceKey: string | null = null
+): ReaderSettingsSnapshot {
+  return {
+    readerMode: normalizeReaderMode(readReaderSetting(values, comicId, sourceKey, 'readerMode')),
+    enableTapToTurnPages: boolSetting(
+      readReaderSetting(values, comicId, sourceKey, 'enableTapToTurnPages'),
+      defaultReaderSettings.enableTapToTurnPages
+    ),
+    reverseTapToTurnPages: boolSetting(
+      readReaderSetting(values, comicId, sourceKey, 'reverseTapToTurnPages'),
+      defaultReaderSettings.reverseTapToTurnPages
+    ),
+    enablePageAnimation: boolSetting(
+      readReaderSetting(values, comicId, sourceKey, 'enablePageAnimation'),
+      defaultReaderSettings.enablePageAnimation
+    ),
+    enableContinuousChapterReading: boolSetting(
+      readReaderSetting(values, comicId, sourceKey, 'enableContinuousChapterReading'),
+      defaultReaderSettings.enableContinuousChapterReading
+    ),
+    autoPageTurningInterval: numberSetting(
+      readReaderSetting(values, comicId, sourceKey, 'autoPageTurningInterval'),
+      defaultReaderSettings.autoPageTurningInterval,
+      1,
+      20
+    ),
+    readerScreenPicNumberForLandscape: Math.round(numberSetting(
+      readReaderSetting(values, comicId, sourceKey, 'readerScreenPicNumberForLandscape'),
+      defaultReaderSettings.readerScreenPicNumberForLandscape,
+      1,
+      5
+    )),
+    readerScreenPicNumberForPortrait: Math.round(numberSetting(
+      readReaderSetting(values, comicId, sourceKey, 'readerScreenPicNumberForPortrait'),
+      defaultReaderSettings.readerScreenPicNumberForPortrait,
+      1,
+      5
+    )),
+    showSingleImageOnFirstPage: boolSetting(
+      readReaderSetting(values, comicId, sourceKey, 'showSingleImageOnFirstPage'),
+      defaultReaderSettings.showSingleImageOnFirstPage
+    ),
+    readerScrollSpeed: numberSetting(
+      readReaderSetting(values, comicId, sourceKey, 'readerScrollSpeed'),
+      defaultReaderSettings.readerScrollSpeed,
+      0.5,
+      3
+    ),
+    enableDoubleTapToZoom: boolSetting(
+      readReaderSetting(values, comicId, sourceKey, 'enableDoubleTapToZoom'),
+      defaultReaderSettings.enableDoubleTapToZoom
+    ),
+    enableLongPressToZoom: boolSetting(
+      readReaderSetting(values, comicId, sourceKey, 'enableLongPressToZoom'),
+      defaultReaderSettings.enableLongPressToZoom
+    ),
+    limitImageWidth: boolSetting(
+      readReaderSetting(values, comicId, sourceKey, 'limitImageWidth'),
+      defaultReaderSettings.limitImageWidth
+    ),
+    showPageNumberInReader: boolSetting(
+      readReaderSetting(values, comicId, sourceKey, 'showPageNumberInReader'),
+      defaultReaderSettings.showPageNumberInReader
+    ),
+    showChapterComments: boolSetting(
+      readReaderSetting(values, comicId, sourceKey, 'showChapterComments'),
+      defaultReaderSettings.showChapterComments
+    )
+  }
+}
+
+function buildReaderSettingsPatch(
+  values: Record<string, unknown>,
+  comicId: string | null,
+  sourceKey: string | null,
+  patch: Partial<Record<ReaderSettingKey, unknown>>
+): Record<string, unknown> {
+  const target = readerSettingTarget(values, comicId, sourceKey)
+  if (target.kind === 'global') return patch
+
+  const root: Record<string, unknown> = isRecord(values[target.rootKey])
+    ? values[target.rootKey] as Record<string, unknown>
+    : {}
+  const scoped: Record<string, unknown> = isRecord(root[target.settingsKey])
+    ? root[target.settingsKey] as Record<string, unknown>
+    : {}
+  return {
+    [target.rootKey]: {
+      ...root,
+      [target.settingsKey]: {
+        ...scoped,
+        ...patch
+      }
+    }
+  }
+}
+
 function readerModeClassName(mode: ReaderMode) {
   const direction = mode.endsWith('RightToLeft') ? ' rtl' : ''
   if (mode.startsWith('gallery')) return `reader-mode-gallery${direction}`
@@ -699,9 +915,10 @@ export default function App() {
     const value = data.settings?.values.themeMode
     return typeof value === 'string' ? value : 'system'
   }, [data.settings])
+  const settingsValues = data.settings?.values ?? {}
   const readerMode = useMemo(
-    () => normalizeReaderMode(data.settings?.values.readerMode),
-    [data.settings]
+    () => resolveReaderSettings(settingsValues).readerMode,
+    [settingsValues]
   )
 
   const setThemeMode = async (value: string) => {
@@ -710,10 +927,28 @@ export default function App() {
     scheduleWebDavUpload()
   }
 
-  const setReaderMode = async (value: ReaderMode) => {
-    const next = await updateSettings({ readerMode: value })
+  const setReaderSettings = async (
+    comicId: string | null,
+    sourceKey: string | null,
+    patchValues: Partial<Record<ReaderSettingKey, unknown>>
+  ) => {
+    const patch = buildReaderSettingsPatch(settingsValues, comicId, sourceKey, patchValues)
+    const next = await updateSettings(patch)
     setData((current) => ({ ...current, settings: next }))
     scheduleWebDavUpload()
+  }
+
+  const setReaderMode = async (value: ReaderMode) => {
+    await setReaderSettings(null, null, { readerMode: value })
+  }
+
+  const setReaderSetting = async (
+    comicId: string | null,
+    sourceKey: string | null,
+    key: ReaderSettingKey,
+    value: unknown
+  ) => {
+    await setReaderSettings(comicId, sourceKey, { [key]: value })
   }
 
   const upsertSource = async (file: File) => {
@@ -1055,9 +1290,15 @@ export default function App() {
     return (
       <ReaderPage
         request={route.request}
-        readerMode={readerMode}
+        readerSettings={resolveReaderSettings(settingsValues, route.request.comic.id, route.request.sourceKey)}
         onBack={() => backToDetailFromReader(route.request)}
         onRecordHistory={saveHistory}
+        onReaderSettingChange={(key, value) =>
+          setReaderSetting(route.request.comic.id, route.request.sourceKey, key, value)
+        }
+        onReaderSettingsChange={(patch) =>
+          setReaderSettings(route.request.comic.id, route.request.sourceKey, patch)
+        }
       />
     )
   }
@@ -1896,16 +2137,57 @@ function ComicDetailPage({
   )
 }
 
+function galleryPageCount(imageCount: number, imagesPerPage: number, showSingleImageOnFirstPage: boolean) {
+  if (imageCount <= 0) return 0
+  if (imagesPerPage <= 1) return imageCount
+  const rest = showSingleImageOnFirstPage ? imageCount - 1 : imageCount
+  return (showSingleImageOnFirstPage ? 1 : 0) + Math.ceil(Math.max(0, rest) / imagesPerPage)
+}
+
+function galleryImageGroups(images: string[], imagesPerPage: number, showSingleImageOnFirstPage: boolean) {
+  if (imagesPerPage <= 1) return images.map((image) => [image])
+  const groups: string[][] = []
+  let start = 0
+  if (showSingleImageOnFirstPage && images.length > 0) {
+    groups.push([images[0]])
+    start = 1
+  }
+  for (let index = start; index < images.length; index += imagesPerPage) {
+    groups.push(images.slice(index, index + imagesPerPage))
+  }
+  return groups
+}
+
+function readerInitialPageIndex(
+  imageCount: number,
+  isGalleryMode: boolean,
+  imagesPerPage: number,
+  showSingleImageOnFirstPage: boolean,
+  initialPage: number | 'first' | 'last'
+) {
+  const maxPage = isGalleryMode
+    ? galleryPageCount(imageCount, imagesPerPage, showSingleImageOnFirstPage)
+    : imageCount
+  if (maxPage <= 0) return 0
+  if (initialPage === 'last') return maxPage - 1
+  if (initialPage === 'first') return 0
+  return Math.min(maxPage - 1, Math.max(0, initialPage - 1))
+}
+
 function ReaderPage({
   request,
-  readerMode,
+  readerSettings,
   onBack,
-  onRecordHistory
+  onRecordHistory,
+  onReaderSettingChange,
+  onReaderSettingsChange
 }: {
   request: ReaderOpenRequest
-  readerMode: ReaderMode
+  readerSettings: ReaderSettingsSnapshot
   onBack: () => void
   onRecordHistory: (payload: HistoryWriteRequest) => Promise<void>
+  onReaderSettingChange: (key: ReaderSettingKey, value: unknown) => Promise<void>
+  onReaderSettingsChange: (patch: Partial<Record<ReaderSettingKey, unknown>>) => Promise<void>
 }) {
   const [images, setImages] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
@@ -1913,38 +2195,91 @@ function ReaderPage({
   const [pageIndex, setPageIndex] = useState(0)
   const [activeEpisode, setActiveEpisode] = useState(request.episode)
   const [chromeOpen, setChromeOpen] = useState(true)
-  const isGalleryMode = readerMode.startsWith('gallery')
-  const isRTL = readerMode.endsWith('RightToLeft')
-  const activePageIndex = images.length === 0 ? 0 : Math.min(pageIndex, images.length - 1)
-  const visibleImages = isGalleryMode ? images.slice(activePageIndex, activePageIndex + 1) : images
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [chapterListOpen, setChapterListOpen] = useState(false)
+  const [autoTurning, setAutoTurning] = useState(false)
+  const [zoomed, setZoomed] = useState(false)
+  const [isPortrait, setIsPortrait] = useState(() =>
+    typeof window === 'undefined' ? true : window.innerHeight >= window.innerWidth
+  )
+  const stageRef = useRef<HTMLDivElement | null>(null)
+  const wheelLockRef = useRef(0)
+  const longPressTimerRef = useRef<number | null>(null)
+  const suppressClickRef = useRef(false)
+  const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null)
+  const layoutRef = useRef({
+    isGalleryMode: readerSettings.readerMode.startsWith('gallery'),
+    imagesPerPage: 1,
+    showSingleImageOnFirstPage: readerSettings.showSingleImageOnFirstPage
+  })
 
+  const readerMode = readerSettings.readerMode
+  const isGalleryMode = readerMode.startsWith('gallery')
+  const isVerticalMode = readerMode.endsWith('TopToBottom')
+  const isRTL = readerMode.endsWith('RightToLeft')
+  const imagesPerPage = isGalleryMode
+    ? (isPortrait ? readerSettings.readerScreenPicNumberForPortrait : readerSettings.readerScreenPicNumberForLandscape)
+    : 1
+  const readerPages = useMemo(
+    () => galleryImageGroups(images, imagesPerPage, readerSettings.showSingleImageOnFirstPage),
+    [images, imagesPerPage, readerSettings.showSingleImageOnFirstPage]
+  )
+  const totalPages = isGalleryMode ? readerPages.length : images.length
+  const activePageIndex = totalPages === 0 ? 0 : Math.min(pageIndex, totalPages - 1)
+  const visibleImages = isGalleryMode ? (readerPages[activePageIndex] ?? []) : images
   const currentEpIndex = request.comic.episodes.findIndex((ep) => ep.id === activeEpisode.id)
   const prevEpisode = currentEpIndex > 0 ? request.comic.episodes[currentEpIndex - 1] : null
   const nextEpisode = currentEpIndex < request.comic.episodes.length - 1 ? request.comic.episodes[currentEpIndex + 1] : null
+  const activeImage = visibleImages[0] ?? images[activePageIndex] ?? null
+  const pageInfoText = `${activeEpisode.title.length > 8 ? `${activeEpisode.title.slice(0, 8)}...` : activeEpisode.title} : ${activePageIndex + 1}/${Math.max(1, totalPages)}`
 
-  const loadEpisode = useCallback((episode: ComicEpisode) => {
+  useEffect(() => {
+    layoutRef.current = {
+      isGalleryMode,
+      imagesPerPage,
+      showSingleImageOnFirstPage: readerSettings.showSingleImageOnFirstPage
+    }
+  }, [imagesPerPage, isGalleryMode, readerSettings.showSingleImageOnFirstPage])
+
+  useEffect(() => {
+    const updateOrientation = () => setIsPortrait(window.innerHeight >= window.innerWidth)
+    window.addEventListener('resize', updateOrientation)
+    return () => window.removeEventListener('resize', updateOrientation)
+  }, [])
+
+  const scrollStageToPage = useCallback((targetPage: number, behavior: ScrollBehavior = 'smooth') => {
+    const stage = stageRef.current
+    if (!stage) return
+    const targetImage = stage.querySelectorAll<HTMLImageElement>('[data-reader-image]').item(targetPage)
+    if (targetImage) {
+      targetImage.scrollIntoView({ block: 'start', inline: 'start', behavior })
+    } else if (targetPage === 0) {
+      stage.scrollTo({ top: 0, left: 0, behavior })
+    }
+  }, [])
+
+  const loadEpisode = useCallback((episode: ComicEpisode, initialPage: number | 'first' | 'last' = 'first') => {
     setLoading(true)
     setMessage(null)
     setImages([])
     setPageIndex(0)
     setActiveEpisode(episode)
     void getComicPages(request.sourceKey, request.comic.id, episode.id)
-      .then(async (response) => {
+      .then((response) => {
+        const layout = layoutRef.current
+        const nextPageIndex = readerInitialPageIndex(
+          response.images.length,
+          layout.isGalleryMode,
+          layout.imagesPerPage,
+          layout.showSingleImageOnFirstPage,
+          initialPage
+        )
         setImages(response.images)
+        setPageIndex(nextPageIndex)
         setMessage(response.images.length === 0 ? '暂无图片' : null)
-        if (response.images.length > 0) {
-          await onRecordHistory({
-            source_key: request.sourceKey,
-            comic_id: request.comic.id,
-            title: request.comic.title,
-            subtitle: request.comic.subtitle,
-            cover: request.comic.cover,
-            episode_id: episode.id,
-            episode_title: episode.title,
-            page: 1,
-            max_page: response.images.length
-          })
-        }
+        window.setTimeout(() => {
+          if (!layout.isGalleryMode) scrollStageToPage(nextPageIndex, 'auto')
+        }, 0)
       })
       .catch((err) => {
         setMessage(err instanceof Error ? err.message : '章节加载失败')
@@ -1952,11 +2287,21 @@ function ReaderPage({
       .finally(() => {
         setLoading(false)
       })
-  }, [onRecordHistory, request.comic, request.sourceKey])
+  }, [request.comic.id, request.sourceKey, scrollStageToPage])
 
   useEffect(() => {
-    loadEpisode(request.episode)
-  }, [request.episode.id, loadEpisode])
+    const historyPage = request.libraryItem?.episode_id === request.episode.id ? request.libraryItem.page : null
+    loadEpisode(request.episode, typeof historyPage === 'number' && historyPage > 0 ? historyPage : 'first')
+    // The chapter request is the load boundary; reader setting changes should not refetch images.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [request.sourceKey, request.comic.id, request.episode.id])
+
+  useEffect(() => {
+    setPageIndex((current) => {
+      if (totalPages <= 0) return 0
+      return Math.min(current, totalPages - 1)
+    })
+  }, [totalPages])
 
   useEffect(() => {
     if (images.length === 0) return
@@ -1969,34 +2314,365 @@ function ReaderPage({
       episode_id: activeEpisode.id,
       episode_title: activeEpisode.title,
       page: activePageIndex + 1,
-      max_page: images.length
+      max_page: Math.max(1, totalPages)
     })
-  }, [activeEpisode, activePageIndex, images.length, onRecordHistory, request.comic, request.sourceKey])
+  }, [activeEpisode, activePageIndex, images.length, onRecordHistory, request.comic, request.sourceKey, totalPages])
+
+  const goToNextPage = useCallback(() => {
+    if (images.length === 0) return false
+    if (isGalleryMode) {
+      if (activePageIndex < totalPages - 1) {
+        setPageIndex(activePageIndex + 1)
+        return true
+      }
+      if (nextEpisode) {
+        loadEpisode(nextEpisode, 'first')
+        return true
+      }
+      return false
+    }
+
+    const stage = stageRef.current
+    if (!stage) return false
+    const nearEnd = isVerticalMode
+      ? stage.scrollTop + stage.clientHeight >= stage.scrollHeight - 8
+      : Math.abs(stage.scrollLeft) + stage.clientWidth >= stage.scrollWidth - 8
+    if (nearEnd && nextEpisode && readerSettings.enableContinuousChapterReading) {
+      loadEpisode(nextEpisode, 'first')
+      return true
+    }
+    const distance = (isVerticalMode ? stage.clientHeight : stage.clientWidth) * 0.86 * readerSettings.readerScrollSpeed
+    stage.scrollBy({
+      top: isVerticalMode ? distance : 0,
+      left: isVerticalMode ? 0 : (isRTL ? -distance : distance),
+      behavior: readerSettings.enablePageAnimation ? 'smooth' : 'auto'
+    })
+    return true
+  }, [
+    activePageIndex,
+    images.length,
+    isGalleryMode,
+    isRTL,
+    isVerticalMode,
+    loadEpisode,
+    nextEpisode,
+    readerSettings.enableContinuousChapterReading,
+    readerSettings.enablePageAnimation,
+    readerSettings.readerScrollSpeed,
+    totalPages
+  ])
+
+  const goToPrevPage = useCallback(() => {
+    if (images.length === 0) return false
+    if (isGalleryMode) {
+      if (activePageIndex > 0) {
+        setPageIndex(activePageIndex - 1)
+        return true
+      }
+      if (prevEpisode) {
+        loadEpisode(prevEpisode, 'last')
+        return true
+      }
+      return false
+    }
+
+    const stage = stageRef.current
+    if (!stage) return false
+    const nearStart = isVerticalMode ? stage.scrollTop <= 8 : Math.abs(stage.scrollLeft) <= 8
+    if (nearStart && prevEpisode && readerSettings.enableContinuousChapterReading) {
+      loadEpisode(prevEpisode, 'last')
+      return true
+    }
+    const distance = (isVerticalMode ? stage.clientHeight : stage.clientWidth) * 0.86 * readerSettings.readerScrollSpeed
+    stage.scrollBy({
+      top: isVerticalMode ? -distance : 0,
+      left: isVerticalMode ? 0 : (isRTL ? distance : -distance),
+      behavior: readerSettings.enablePageAnimation ? 'smooth' : 'auto'
+    })
+    return true
+  }, [
+    activePageIndex,
+    images.length,
+    isGalleryMode,
+    isRTL,
+    isVerticalMode,
+    loadEpisode,
+    prevEpisode,
+    readerSettings.enableContinuousChapterReading,
+    readerSettings.enablePageAnimation,
+    readerSettings.readerScrollSpeed
+  ])
+
+  useEffect(() => {
+    if (!autoTurning || images.length === 0) return undefined
+    const timer = window.setInterval(() => {
+      if (!goToNextPage()) setAutoTurning(false)
+    }, readerSettings.autoPageTurningInterval * 1000)
+    return () => window.clearInterval(timer)
+  }, [autoTurning, goToNextPage, images.length, readerSettings.autoPageTurningInterval])
 
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        onBack()
+        if (settingsOpen || chapterListOpen) {
+          setSettingsOpen(false)
+          setChapterListOpen(false)
+        } else {
+          onBack()
+        }
         return
       }
-      if (!isGalleryMode || images.length === 0) return
+      if (event.key === 'F12') {
+        event.preventDefault()
+        if (!document.fullscreenElement) {
+          void document.documentElement.requestFullscreen?.()
+        } else {
+          void document.exitFullscreen?.()
+        }
+        return
+      }
+      if (images.length === 0) return
       if (event.key === 'ArrowLeft') {
-        setPageIndex((current) => isRTL ? Math.min(images.length - 1, current + 1) : Math.max(0, current - 1))
+        event.preventDefault()
+        if (isRTL) goToNextPage()
+        else goToPrevPage()
       } else if (event.key === 'ArrowRight') {
-        setPageIndex((current) => isRTL ? Math.max(0, current - 1) : Math.min(images.length - 1, current + 1))
+        event.preventDefault()
+        if (isRTL) goToPrevPage()
+        else goToNextPage()
+      } else if (event.key === 'ArrowUp' || event.key === 'PageUp') {
+        event.preventDefault()
+        goToPrevPage()
+      } else if (event.key === 'ArrowDown' || event.key === 'PageDown' || event.key === ' ') {
+        event.preventDefault()
+        goToNextPage()
       }
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [isGalleryMode, isRTL, images.length, onBack])
+  }, [chapterListOpen, goToNextPage, goToPrevPage, images.length, isRTL, onBack, settingsOpen])
 
-  const readerModeLabel = readerModeOptions.find((option) => option.key === readerMode)?.label
-  const goToPrev = () => { if (prevEpisode) loadEpisode(prevEpisode) }
-  const goToNext = () => { if (nextEpisode) loadEpisode(nextEpisode) }
+  const handleWheel = useCallback((event: WheelEvent) => {
+    if (event.ctrlKey) return
+    const now = window.performance.now()
+    if (isGalleryMode) {
+      event.preventDefault()
+      if (now - wheelLockRef.current < 180) return
+      wheelLockRef.current = now
+      const forward = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX > 0 : event.deltaY > 0
+      if (forward) goToNextPage()
+      else goToPrevPage()
+      return
+    }
+    if (readerSettings.readerScrollSpeed !== 1) {
+      event.preventDefault()
+      const stage = stageRef.current
+      if (!stage) return
+      if (isVerticalMode) {
+        stage.scrollBy({ top: event.deltaY * readerSettings.readerScrollSpeed, behavior: 'auto' })
+      } else {
+        const delta = (Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY) *
+          readerSettings.readerScrollSpeed
+        stage.scrollBy({ left: isRTL ? -delta : delta, behavior: 'auto' })
+      }
+    }
+  }, [goToNextPage, goToPrevPage, isGalleryMode, isRTL, isVerticalMode, readerSettings.readerScrollSpeed])
+
+  useEffect(() => {
+    const stage = stageRef.current
+    if (!stage) return undefined
+    stage.addEventListener('wheel', handleWheel, { passive: false })
+    return () => stage.removeEventListener('wheel', handleWheel)
+  }, [handleWheel])
+
+  const handleStageScroll = () => {
+    if (isGalleryMode) return
+    const stage = stageRef.current
+    if (!stage) return
+    const imagesInStage = Array.from(stage.querySelectorAll<HTMLImageElement>('[data-reader-image]'))
+    const center = isVerticalMode
+      ? stage.getBoundingClientRect().top + stage.clientHeight / 2
+      : stage.getBoundingClientRect().left + stage.clientWidth / 2
+    const nextIndex = imagesInStage.findIndex((image) => {
+      const rect = image.getBoundingClientRect()
+      return isVerticalMode ? rect.bottom >= center : rect.right >= center
+    })
+    if (nextIndex >= 0) setPageIndex(nextIndex)
+  }
+
+  const handleStageClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false
+      return
+    }
+    if (settingsOpen || chapterListOpen) {
+      setSettingsOpen(false)
+      setChapterListOpen(false)
+      return
+    }
+    if (chromeOpen) {
+      setChromeOpen(false)
+      return
+    }
+    if (!readerSettings.enableTapToTurnPages) {
+      setChromeOpen(true)
+      return
+    }
+
+    const rect = event.currentTarget.getBoundingClientRect()
+    const x = event.clientX - rect.left
+    const y = event.clientY - rect.top
+    const isLeft = x < rect.width * 0.25
+    const isRight = x > rect.width * 0.75
+    const isTop = y < rect.height * 0.25
+    const isBottom = y > rect.height * 0.75
+    let turn: 'prev' | 'next' | null = null
+    if (readerMode.endsWith('TopToBottom')) {
+      turn = isTop ? 'prev' : isBottom ? 'next' : null
+    } else if (readerMode.endsWith('RightToLeft')) {
+      turn = isLeft ? 'next' : isRight ? 'prev' : null
+    } else {
+      turn = isLeft ? 'prev' : isRight ? 'next' : null
+    }
+    if (readerSettings.reverseTapToTurnPages && turn) {
+      turn = turn === 'next' ? 'prev' : 'next'
+    }
+    if (turn === 'next') {
+      goToNextPage()
+      return
+    }
+    if (turn === 'prev') {
+      goToPrevPage()
+      return
+    }
+    setChromeOpen(true)
+  }
+
+  const handleDoubleClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (!readerSettings.enableDoubleTapToZoom) return
+    event.preventDefault()
+    suppressClickRef.current = true
+    setZoomed((value) => !value)
+    setChromeOpen(false)
+  }
+
+  const clearLongPressTimer = () => {
+    if (longPressTimerRef.current != null) {
+      window.clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
+    }
+  }
+
+  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!readerSettings.enableLongPressToZoom || event.pointerType === 'mouse' && event.button !== 0) return
+    clearLongPressTimer()
+    longPressTimerRef.current = window.setTimeout(() => {
+      suppressClickRef.current = true
+      setZoomed(true)
+      setChromeOpen(false)
+    }, 420)
+  }
+
+  const handlePointerUp = () => {
+    clearLongPressTimer()
+    if (readerSettings.enableLongPressToZoom) setZoomed(false)
+  }
+
+  const handleTouchStart = (event: ReactTouchEvent<HTMLDivElement>) => {
+    const touch = event.touches[0]
+    if (!touch) return
+    touchStartRef.current = { x: touch.clientX, y: touch.clientY, time: Date.now() }
+  }
+
+  const handleTouchEnd = (event: ReactTouchEvent<HTMLDivElement>) => {
+    const start = touchStartRef.current
+    const touch = event.changedTouches[0]
+    touchStartRef.current = null
+    if (!start || !touch || Date.now() - start.time > 700) return
+    const dx = touch.clientX - start.x
+    const dy = touch.clientY - start.y
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < 54) return
+    if (readerMode.endsWith('TopToBottom')) {
+      if (dy < 0) goToNextPage()
+      else goToPrevPage()
+    } else if (readerMode.endsWith('RightToLeft')) {
+      if (dx > 0) goToNextPage()
+      else goToPrevPage()
+    } else if (dx < 0) {
+      goToNextPage()
+    } else {
+      goToPrevPage()
+    }
+  }
+
+  const handlePageSlider = (event: ChangeEvent<HTMLInputElement>) => {
+    const nextPage = Math.min(Math.max(Number(event.target.value) - 1, 0), Math.max(0, totalPages - 1))
+    setPageIndex(nextPage)
+    if (!isGalleryMode) window.setTimeout(() => scrollStageToPage(nextPage), 0)
+  }
+
+  const changeReaderMode = (mode: ReaderMode) => {
+    const patch: Partial<Record<ReaderSettingKey, unknown>> = { readerMode: mode }
+    if (mode.startsWith('continuous')) {
+      patch.readerScreenPicNumberForLandscape = 1
+      patch.readerScreenPicNumberForPortrait = 1
+    }
+    void onReaderSettingsChange(patch)
+  }
+
+  const saveCurrentImage = () => {
+    if (!activeImage) return
+    window.open(imageProxyUrl(activeImage), '_blank', 'noopener,noreferrer')
+  }
+
+  const shareCurrentImage = () => {
+    const text = activeImage ? imageProxyUrl(activeImage) : `${request.comic.title} ${activeEpisode.title}`
+    const webNavigator = navigator as Navigator & {
+      share?: (data: ShareData) => Promise<void>
+      clipboard?: { writeText: (text: string) => Promise<void> }
+    }
+    if (webNavigator.share) {
+      void webNavigator.share({ title: request.comic.title, text })
+    } else {
+      void webNavigator.clipboard?.writeText(text)
+    }
+  }
+
+  const openSettings = () => {
+    setChapterListOpen(false)
+    setSettingsOpen(true)
+    setChromeOpen(true)
+  }
+
+  const openChapters = () => {
+    setSettingsOpen(false)
+    setChapterListOpen(true)
+    setChromeOpen(true)
+  }
 
   return (
-    <main className={`reader-page ${readerModeClassName(readerMode)}`} tabIndex={0}>
-      <div className="reader-stage" onClick={() => setChromeOpen((value) => !value)}>
+    <main
+      className={[
+        'reader-page',
+        readerModeClassName(readerMode),
+        zoomed ? 'reader-zoomed' : '',
+        readerSettings.limitImageWidth ? '' : 'reader-unlimited-width'
+      ].filter(Boolean).join(' ')}
+      tabIndex={0}
+    >
+      <div
+        ref={stageRef}
+        className="reader-stage"
+        onScroll={handleStageScroll}
+        onClick={handleStageClick}
+        onDoubleClick={handleDoubleClick}
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        onPointerLeave={handlePointerUp}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+      >
         {loading ? <EmptyLine icon={Loader2} text="加载章节中" /> : null}
         {message && images.length === 0 ? <EmptyLine icon={BookOpen} text={message} /> : null}
         {images.length > 0 ? (
@@ -2004,6 +2680,7 @@ function ReaderPage({
             {visibleImages.map((image, index) => (
               <img
                 key={`${image}-${index}`}
+                data-reader-image
                 src={imageProxyUrl(image)}
                 alt={`第 ${isGalleryMode ? activePageIndex + 1 : index + 1} 页`}
                 loading={index < 2 ? 'eager' : 'lazy'}
@@ -2012,48 +2689,222 @@ function ReaderPage({
           </div>
         ) : null}
       </div>
+      {readerSettings.showPageNumberInReader && images.length > 0 ? (
+        <div className="reader-page-info">{pageInfoText}</div>
+      ) : null}
       <header className={chromeOpen ? 'reader-top open' : 'reader-top'}>
         <IconButton type="button" aria-label="返回" onClick={onBack}>
           <ChevronLeft size={20} />
         </IconButton>
-        <div>
+        <div className="reader-title">
           <strong>{request.comic.title}</strong>
           <span>{activeEpisode.title}</span>
         </div>
-        <div style={{ display: 'flex', gap: '4px' }}>
-          {prevEpisode ? (
-            <IconButton type="button" aria-label="上一章" title={prevEpisode.title} onClick={goToPrev}>
-              <ChevronLeft size={20} />
+        <div className="reader-top-actions">
+          {readerSettings.showChapterComments ? (
+            <IconButton type="button" aria-label="章节评论" title="章节评论" disabled>
+              <Info size={18} />
             </IconButton>
           ) : null}
-          {nextEpisode ? (
-            <IconButton type="button" aria-label="下一章" title={nextEpisode.title} onClick={goToNext}>
-              <ChevronRight size={20} />
-            </IconButton>
-          ) : null}
+          <IconButton type="button" aria-label="阅读设置" title="阅读设置" onClick={openSettings}>
+            <Settings size={19} />
+          </IconButton>
         </div>
       </header>
       <footer className={chromeOpen ? 'reader-bottom open' : 'reader-bottom'}>
-        <IconButton
-          type="button"
-          disabled={!isGalleryMode || activePageIndex === 0}
-          onClick={() => setPageIndex((current) => Math.max(0, current - 1))}
-        >
-          <ChevronLeft size={18} />
-        </IconButton>
-        <div className="reader-progress">
-          <span>{isGalleryMode ? `${activePageIndex + 1}/${images.length || 1}` : `${images.length} 张`}</span>
-          <small>{readerModeLabel}</small>
+        <div className="reader-slider-row">
+          <IconButton
+            type="button"
+            aria-label="上一章"
+            title={prevEpisode?.title ?? '第一页'}
+            onClick={() => {
+              if (prevEpisode) loadEpisode(prevEpisode, 'first')
+              else setPageIndex(0)
+            }}
+          >
+            <ChevronLeft size={18} />
+          </IconButton>
+          <input
+            aria-label="阅读进度"
+            type="range"
+            min={1}
+            max={Math.max(1, totalPages)}
+            value={activePageIndex + 1}
+            onChange={handlePageSlider}
+          />
+          <IconButton
+            type="button"
+            aria-label="下一章"
+            title={nextEpisode?.title ?? '最后一页'}
+            onClick={() => {
+              if (nextEpisode) loadEpisode(nextEpisode, 'first')
+              else setPageIndex(Math.max(0, totalPages - 1))
+            }}
+          >
+            <ChevronRight size={18} />
+          </IconButton>
         </div>
-        <IconButton
-          type="button"
-          disabled={!isGalleryMode || activePageIndex >= images.length - 1}
-          onClick={() => setPageIndex((current) => Math.min(images.length - 1, current + 1))}
-        >
-          <ChevronRight size={18} />
-        </IconButton>
+        <div className="reader-action-row">
+          <span className="reader-chip">{`E${currentEpIndex + 1} : P${activePageIndex + 1}`}</span>
+          <button
+            className={autoTurning ? 'reader-tool active' : 'reader-tool'}
+            type="button"
+            aria-label={autoTurning ? '停止自动翻页' : '自动翻页'}
+            title={autoTurning ? '停止自动翻页' : '自动翻页'}
+            onClick={() => setAutoTurning((value) => !value)}
+          >
+            <Play size={16} />
+            <span>{autoTurning ? '停止' : '自动'}</span>
+          </button>
+          <button className="reader-tool" type="button" aria-label="章节" title="章节" onClick={openChapters}>
+            <Library size={16} />
+            <span>章节</span>
+          </button>
+          <button
+            className="reader-tool"
+            type="button"
+            aria-label="保存图片"
+            title="保存图片"
+            disabled={!activeImage}
+            onClick={saveCurrentImage}
+          >
+            <Download size={16} />
+            <span>保存</span>
+          </button>
+          <button className="reader-tool" type="button" aria-label="分享" title="分享" onClick={shareCurrentImage}>
+            <Upload size={16} />
+            <span>分享</span>
+          </button>
+        </div>
+        <div className="reader-progress">
+          <span>{`${activePageIndex + 1}/${Math.max(1, totalPages)}`}</span>
+        </div>
       </footer>
+      {settingsOpen ? (
+        <aside className="reader-side-panel reader-settings-panel" aria-label="阅读设置">
+          <div className="reader-panel-header">
+            <strong>阅读设置</strong>
+            <IconButton type="button" aria-label="关闭阅读设置" onClick={() => setSettingsOpen(false)}>
+              <ChevronRight size={18} />
+            </IconButton>
+          </div>
+          <div className="reader-panel-scroll">
+            <div className="reader-setting-group">
+              <span className="section-label">阅读方式</span>
+              <div className="reader-mode-control" role="group" aria-label="阅读方式">
+                {readerModeOptions.map((option) => (
+                  <button
+                    key={option.key}
+                    className={readerMode === option.key ? 'selected' : ''}
+                    type="button"
+                    onClick={() => changeReaderMode(option.key)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <ReaderSwitchSetting title="点击翻页" checked={readerSettings.enableTapToTurnPages} onChange={(value) => void onReaderSettingChange('enableTapToTurnPages', value)} />
+            <ReaderSwitchSetting title="反向点击翻页" checked={readerSettings.reverseTapToTurnPages} onChange={(value) => void onReaderSettingChange('reverseTapToTurnPages', value)} />
+            <ReaderSwitchSetting title="翻页动画" checked={readerSettings.enablePageAnimation} onChange={(value) => void onReaderSettingChange('enablePageAnimation', value)} />
+            <ReaderSwitchSetting title="连续章节阅读" checked={readerSettings.enableContinuousChapterReading} onChange={(value) => void onReaderSettingChange('enableContinuousChapterReading', value)} />
+            <ReaderSliderSetting title="自动翻页间隔" value={readerSettings.autoPageTurningInterval} min={1} max={20} step={1} suffix="秒" onChange={(value) => void onReaderSettingChange('autoPageTurningInterval', value)} />
+            {isGalleryMode ? (
+              <>
+                <ReaderSliderSetting title="横屏同屏张数" value={readerSettings.readerScreenPicNumberForLandscape} min={1} max={5} step={1} onChange={(value) => void onReaderSettingChange('readerScreenPicNumberForLandscape', value)} />
+                <ReaderSliderSetting title="竖屏同屏张数" value={readerSettings.readerScreenPicNumberForPortrait} min={1} max={5} step={1} onChange={(value) => void onReaderSettingChange('readerScreenPicNumberForPortrait', value)} />
+                {(readerSettings.readerScreenPicNumberForLandscape > 1 || readerSettings.readerScreenPicNumberForPortrait > 1) ? (
+                  <ReaderSwitchSetting title="第一页单图显示" checked={readerSettings.showSingleImageOnFirstPage} onChange={(value) => void onReaderSettingChange('showSingleImageOnFirstPage', value)} />
+                ) : null}
+              </>
+            ) : (
+              <ReaderSliderSetting title="滚轮速度" value={readerSettings.readerScrollSpeed} min={0.5} max={3} step={0.1} suffix="x" onChange={(value) => void onReaderSettingChange('readerScrollSpeed', value)} />
+            )}
+            <ReaderSwitchSetting title="双击缩放" checked={readerSettings.enableDoubleTapToZoom} onChange={(value) => void onReaderSettingChange('enableDoubleTapToZoom', value)} />
+            <ReaderSwitchSetting title="长按缩放" checked={readerSettings.enableLongPressToZoom} onChange={(value) => void onReaderSettingChange('enableLongPressToZoom', value)} />
+            <ReaderSwitchSetting title="限制图片宽度" checked={readerSettings.limitImageWidth} onChange={(value) => void onReaderSettingChange('limitImageWidth', value)} />
+            <ReaderSwitchSetting title="显示页码" checked={readerSettings.showPageNumberInReader} onChange={(value) => void onReaderSettingChange('showPageNumberInReader', value)} />
+            <ReaderSwitchSetting title="章节评论" checked={readerSettings.showChapterComments} onChange={(value) => void onReaderSettingChange('showChapterComments', value)} />
+          </div>
+        </aside>
+      ) : null}
+      {chapterListOpen ? (
+        <aside className="reader-side-panel reader-chapter-panel" aria-label="章节列表">
+          <div className="reader-panel-header">
+            <strong>章节</strong>
+            <IconButton type="button" aria-label="关闭章节列表" onClick={() => setChapterListOpen(false)}>
+              <ChevronRight size={18} />
+            </IconButton>
+          </div>
+          <div className="reader-chapter-list">
+            {request.comic.episodes.map((episode, index) => (
+              <button
+                key={episode.id}
+                className={episode.id === activeEpisode.id ? 'current' : ''}
+                type="button"
+                onClick={() => {
+                  setChapterListOpen(false)
+                  loadEpisode(episode, 'first')
+                }}
+              >
+                <span>{`E${index + 1}`}</span>
+                <strong>{episode.title}</strong>
+              </button>
+            ))}
+          </div>
+        </aside>
+      ) : null}
     </main>
+  )
+}
+
+function ReaderSwitchSetting({
+  title,
+  checked,
+  onChange
+}: {
+  title: string
+  checked: boolean
+  onChange: (value: boolean) => void
+}) {
+  return (
+    <label className="reader-setting-row">
+      <span>{title}</span>
+      <Switch checked={checked} onChange={onChange} />
+    </label>
+  )
+}
+
+function ReaderSliderSetting({
+  title,
+  value,
+  min,
+  max,
+  step,
+  suffix,
+  onChange
+}: {
+  title: string
+  value: number
+  min: number
+  max: number
+  step: number
+  suffix?: string
+  onChange: (value: number) => void
+}) {
+  return (
+    <label className="reader-setting-row reader-slider-setting">
+      <span>{title}</span>
+      <strong>{`${value}${suffix ?? ''}`}</strong>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+      />
+    </label>
   )
 }
 
