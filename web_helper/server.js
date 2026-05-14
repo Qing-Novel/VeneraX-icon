@@ -4,6 +4,7 @@ import {
   createReadStream,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   statSync,
   writeFileSync,
@@ -1809,6 +1810,16 @@ function backupSha256(buffer) {
   return createHash("sha256").update(buffer).digest("hex");
 }
 
+const serverDbEntryNames = [
+  "data/venera.db",
+  "history.db",
+  "local_favorite.db",
+  "read_later.db",
+  "cookie.db",
+];
+
+const serverDbBackupEntryNames = [...serverDbEntryNames, "appdata.json"];
+
 function assertLooksLikeVeneraBackup(buffer, fileName = "backup") {
   if (!Buffer.isBuffer(buffer) || buffer.length < 4) {
     throw createHttpError(422, `${fileName} is empty or truncated`);
@@ -2249,8 +2260,7 @@ async function handleExtractDbRoute({ req, res, parsedUrl }) {
   const zipBuf = Buffer.from(dataBase64, "base64");
   assertLooksLikeVeneraBackup(zipBuf, "extract-db payload");
 
-  const dbNames = ["data/venera.db", "history.db", "local_favorite.db", "read_later.db", "cookie.db"];
-  const entries = extractZipEntries(zipBuf, (name) => dbNames.includes(name));
+  const entries = extractZipEntries(zipBuf, (name) => serverDbEntryNames.includes(name));
 
   const result = {};
   for (const [entryName, dbBuf] of entries) {
@@ -2265,6 +2275,367 @@ async function handleExtractDbRoute({ req, res, parsedUrl }) {
     }
   }
   sendJson(res, 200, { ok: true, databases: result });
+  return true;
+}
+
+function normalizeServerDbProfileId(value) {
+  const raw = String(value || "default").trim() || "default";
+  if (!/^[0-9A-Za-z_.-]{1,80}$/.test(raw)) {
+    throw createHttpError(400, "Invalid server DB profile");
+  }
+  return raw;
+}
+
+function serverDbProfileRoot(serverDataRoot, profileId) {
+  return join(resolve(serverDataRoot), "profiles", profileId);
+}
+
+function serverDbMetadataPath(profileRoot) {
+  return join(profileRoot, "metadata.json");
+}
+
+function serverDbEntryPath(profileRoot, entryName) {
+  if (!serverDbEntryNames.includes(entryName)) {
+    throw createHttpError(400, "Unsupported server DB entry");
+  }
+  return join(profileRoot, "db", entryName);
+}
+
+function readServerDbMetadata(profileRoot) {
+  const filePath = serverDbMetadataPath(profileRoot);
+  if (!existsSync(filePath)) return {};
+  try {
+    return JSON.parse(readFileSync(filePath, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function writeServerDbMetadata(profileRoot, metadata) {
+  mkdirSync(profileRoot, { recursive: true });
+  writeFileSync(
+    serverDbMetadataPath(profileRoot),
+    JSON.stringify(metadata, null, 2),
+  );
+}
+
+function serverDbFileInfo(profileRoot, entryName) {
+  const filePath = serverDbEntryPath(profileRoot, entryName);
+  if (!existsSync(filePath)) return { exists: false };
+  const stat = statSync(filePath);
+  const bytes = readFileSync(filePath);
+  return {
+    exists: true,
+    size: stat.size,
+    modifiedAt: stat.mtimeMs,
+    sha256: backupSha256(bytes),
+  };
+}
+
+function serverDbStatus(serverDataRoot, profileId) {
+  const profileRoot = serverDbProfileRoot(serverDataRoot, profileId);
+  const databases = {};
+  for (const entryName of serverDbEntryNames) {
+    databases[entryName] = serverDbFileInfo(profileRoot, entryName);
+  }
+  const appdataPath = join(profileRoot, "appdata.json");
+  const hasAppdata = existsSync(appdataPath);
+  const metadata = readServerDbMetadata(profileRoot);
+  return {
+    ok: true,
+    profile: profileId,
+    initialized:
+      hasAppdata ||
+      Object.values(databases).some((info) => info && info.exists === true),
+    metadata,
+    appdata: hasAppdata
+      ? {
+          exists: true,
+          size: statSync(appdataPath).size,
+          modifiedAt: statSync(appdataPath).mtimeMs,
+        }
+      : { exists: false },
+    databases,
+  };
+}
+
+function writeServerDbBackup(profileRoot, entries) {
+  let writtenDatabases = 0;
+  for (const entryName of serverDbEntryNames) {
+    const bytes = entries.get(entryName);
+    if (!bytes) continue;
+    const filePath = serverDbEntryPath(profileRoot, entryName);
+    mkdirSync(dirname(filePath), { recursive: true });
+    writeFileSync(filePath, bytes);
+    writtenDatabases += 1;
+  }
+  const appdata = entries.get("appdata.json");
+  if (appdata) {
+    mkdirSync(profileRoot, { recursive: true });
+    writeFileSync(join(profileRoot, "appdata.json"), appdata);
+  }
+  return {
+    writtenDatabases,
+    writtenAppdata: !!appdata,
+  };
+}
+
+function listServerDbProfiles(serverDataRoot) {
+  const profilesRoot = join(resolve(serverDataRoot), "profiles");
+  if (!existsSync(profilesRoot)) return [];
+  return readdirSync(profilesRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .filter((name) => /^[0-9A-Za-z_.-]{1,80}$/.test(name))
+    .sort();
+}
+
+async function downloadLatestWebDavBackup({
+  config,
+  payload,
+  cookieJar,
+  persistCookieJar,
+  recordProxyRequest,
+}) {
+  const remoteFileName = normalizeWebDavBackupName(payload.remoteFileName);
+  let selectedFile = remoteFileName;
+  let remoteTimestamp = null;
+  let buffer = null;
+  let availableFiles = await listWebDavBackupFiles({
+    config,
+    cookieJar,
+    persistCookieJar,
+    recordProxyRequest,
+  });
+  availableFiles = availableFiles.filter((name) => name !== "latest.venera");
+
+  if (selectedFile) {
+    const result = await webDavRequest({
+      config,
+      path: selectedFile,
+      method: "GET",
+      cookieJar,
+      persistCookieJar,
+      recordProxyRequest,
+    });
+    buffer = result.body;
+    remoteTimestamp = backupTimestamp(selectedFile) || null;
+  } else if (availableFiles.length > 0) {
+    selectedFile = sortBackupFiles(availableFiles, true)[0];
+    const result = await webDavRequest({
+      config,
+      path: selectedFile,
+      method: "GET",
+      cookieJar,
+      persistCookieJar,
+      recordProxyRequest,
+    });
+    buffer = result.body;
+    remoteTimestamp = backupTimestamp(selectedFile) || null;
+  } else {
+    const result = await webDavRequest({
+      config,
+      path: "latest.venera",
+      method: "GET",
+      cookieJar,
+      persistCookieJar,
+      recordProxyRequest,
+    });
+    buffer = result.body;
+    selectedFile = "latest.venera";
+    remoteTimestamp = Date.now();
+  }
+
+  assertLooksLikeVeneraBackup(buffer, selectedFile || "downloaded backup");
+  return {
+    buffer,
+    remoteFileName: selectedFile,
+    remoteTimestamp,
+    availableFiles: sortBackupFiles(availableFiles, true),
+    size: buffer.length,
+    sha256: backupSha256(buffer),
+  };
+}
+
+async function handleServerDbRoute({
+  req,
+  res,
+  parsedUrl,
+  serverDataRoot,
+  cookieJar,
+  persistCookieJar,
+  recordProxyRequest,
+}) {
+  if (!parsedUrl.pathname.startsWith("/api/server-db")) return false;
+
+  if (parsedUrl.pathname === "/api/server-db/profiles") {
+    if (req.method !== "GET") {
+      sendJson(res, 405, { error: "Method not allowed" });
+      return true;
+    }
+    sendJson(res, 200, {
+      ok: true,
+      profiles: listServerDbProfiles(serverDataRoot),
+    });
+    return true;
+  }
+
+  let payload = {};
+  if (req.method === "POST") {
+    payload = parseJsonBody(await readBody(req), "Invalid server DB payload");
+  } else if (req.method !== "GET") {
+    sendJson(res, 405, { error: "Method not allowed" });
+    return true;
+  }
+  const profileId = normalizeServerDbProfileId(
+    payload.profile || parsedUrl.searchParams.get("profile"),
+  );
+  const profileRoot = serverDbProfileRoot(serverDataRoot, profileId);
+
+  if (parsedUrl.pathname === "/api/server-db/status") {
+    sendJson(res, 200, serverDbStatus(serverDataRoot, profileId));
+    return true;
+  }
+
+  if (parsedUrl.pathname === "/api/server-db/dump") {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { error: "Method not allowed" });
+      return true;
+    }
+    const database = String(payload.database || "").trim();
+    const filePath = serverDbEntryPath(profileRoot, database);
+    if (!existsSync(filePath)) {
+      throw createHttpError(404, "Server DB entry not found");
+    }
+    sendJson(res, 200, {
+      ok: true,
+      profile: profileId,
+      database,
+      ...extractSqliteData(readFileSync(filePath)),
+    });
+    return true;
+  }
+
+  if (parsedUrl.pathname === "/api/server-db/appdata") {
+    const appdataPath = join(profileRoot, "appdata.json");
+    if (!existsSync(appdataPath)) {
+      throw createHttpError(404, "Server appdata not found");
+    }
+    let data;
+    try {
+      data = JSON.parse(readFileSync(appdataPath, "utf8"));
+    } catch {
+      throw createHttpError(422, "Server appdata is invalid JSON");
+    }
+    sendJson(res, 200, {
+      ok: true,
+      profile: profileId,
+      data,
+    });
+    return true;
+  }
+
+  if (parsedUrl.pathname === "/api/server-db/sync/webdav") {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { error: "Method not allowed" });
+      return true;
+    }
+    const config = normalizeWebDavConfig(payload);
+    const metadata = readServerDbMetadata(profileRoot);
+    const force = payload.force === true;
+    const existingStatus = serverDbStatus(serverDataRoot, profileId);
+    if (
+      !force &&
+      payload.remoteFileName &&
+      metadata.remoteFileName === payload.remoteFileName &&
+      existingStatus.initialized
+    ) {
+      sendJson(res, 200, {
+        ok: true,
+        skipped: true,
+        reason: "server-db-up-to-date",
+        profile: profileId,
+        status: existingStatus,
+      });
+      return true;
+    }
+    if (!force && !payload.remoteFileName && metadata.remoteFileName) {
+      let availableFiles = await listWebDavBackupFiles({
+        config,
+        cookieJar,
+        persistCookieJar,
+        recordProxyRequest,
+      });
+      availableFiles = availableFiles.filter((name) => name !== "latest.venera");
+      const selectedFile = sortBackupFiles(availableFiles, true)[0] || "";
+      if (selectedFile && selectedFile === metadata.remoteFileName && existingStatus.initialized) {
+        sendJson(res, 200, {
+          ok: true,
+          skipped: true,
+          reason: "server-db-up-to-date",
+          profile: profileId,
+          remoteFileName: selectedFile,
+          availableFiles: sortBackupFiles(availableFiles, true),
+          status: existingStatus,
+        });
+        return true;
+      }
+    }
+
+    const downloaded = await downloadLatestWebDavBackup({
+      config,
+      payload,
+      cookieJar,
+      persistCookieJar,
+      recordProxyRequest,
+    });
+    if (
+      !force &&
+      metadata.sha256 === downloaded.sha256 &&
+      serverDbStatus(serverDataRoot, profileId).initialized
+    ) {
+      sendJson(res, 200, {
+        ok: true,
+        skipped: true,
+        reason: "server-db-same-backup",
+        profile: profileId,
+        remoteFileName: downloaded.remoteFileName,
+        sha256: downloaded.sha256,
+        status: serverDbStatus(serverDataRoot, profileId),
+      });
+      return true;
+    }
+
+    const entries = extractZipEntries(downloaded.buffer, (name) =>
+      serverDbBackupEntryNames.includes(name),
+    );
+    const written = writeServerDbBackup(profileRoot, entries);
+    if (written.writtenDatabases === 0 && !written.writtenAppdata) {
+      throw createHttpError(422, "Backup does not contain supported app data");
+    }
+    writeServerDbMetadata(profileRoot, {
+      remoteFileName: downloaded.remoteFileName,
+      remoteTimestamp: downloaded.remoteTimestamp,
+      availableFiles: downloaded.availableFiles,
+      size: downloaded.size,
+      sha256: downloaded.sha256,
+      syncedAt: Date.now(),
+    });
+    sendJson(res, 200, {
+      ok: true,
+      skipped: false,
+      profile: profileId,
+      remoteFileName: downloaded.remoteFileName,
+      remoteTimestamp: downloaded.remoteTimestamp,
+      size: downloaded.size,
+      sha256: downloaded.sha256,
+      written,
+      status: serverDbStatus(serverDataRoot, profileId),
+    });
+    return true;
+  }
+
+  sendJson(res, 404, { error: "Not found" });
   return true;
 }
 
@@ -2976,6 +3347,11 @@ export function createServer(options = {}) {
       process.env.VENERA_BROWSER_DATA_DIR ||
       join(process.cwd(), ".browser-data"),
   );
+  const serverDataRoot = resolve(
+    options.serverDataDir ||
+      process.env.VENERA_SERVER_DATA_DIR ||
+      join(process.cwd(), ".venera-helper-data"),
+  );
   const cookieJarPath =
     options.cookieJarPath || process.env.VENERA_COOKIE_JAR_PATH || "";
   const cookieJar = loadCookieJar(cookieJarPath);
@@ -3151,6 +3527,20 @@ export function createServer(options = {}) {
       }
 
       if (await handleExtractDbRoute({ req, res, parsedUrl })) {
+        return;
+      }
+
+      if (
+        await handleServerDbRoute({
+          req,
+          res,
+          parsedUrl,
+          serverDataRoot,
+          cookieJar,
+          persistCookieJar,
+          recordProxyRequest,
+        })
+      ) {
         return;
       }
 

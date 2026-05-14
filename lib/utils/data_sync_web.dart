@@ -9,9 +9,16 @@ import 'package:venera/foundation/comic_source/comic_source.dart';
 import 'package:venera/foundation/favorites.dart';
 import 'package:venera/foundation/log.dart';
 import 'package:venera/foundation/res.dart';
-import 'package:venera/utils/data.dart';
+import 'package:venera/utils/data_web.dart';
 
 import 'io.dart';
+
+const _serverDbEntries = [
+  'data/venera.db',
+  'history.db',
+  'local_favorite.db',
+  'cookie.db',
+];
 
 class DataSync with ChangeNotifier {
   DataSync._() {
@@ -96,12 +103,12 @@ class DataSync with ChangeNotifier {
     );
   }
 
-  Future<Map<String, dynamic>> _callHelper(
-    String route,
+  Future<Map<String, dynamic>> _postHelper(
+    String path,
     Map<String, dynamic> payload,
   ) async {
     final response = await _helperDio().post(
-      '/sync/webdav/$route',
+      path,
       data: payload,
       options: Options(extra: const {'maskDataInLog': true}),
     );
@@ -110,6 +117,85 @@ class DataSync with ChangeNotifier {
       return data.cast<String, dynamic>();
     }
     throw StateError('Unexpected helper response');
+  }
+
+  Future<Map<String, dynamic>> _callHelper(
+    String route,
+    Map<String, dynamic> payload,
+  ) {
+    return _postHelper('/sync/webdav/$route', payload);
+  }
+
+  String get _serverDbProfile {
+    final value = appdata.settings['webServerDbProfile']?.toString().trim();
+    return value == null || value.isEmpty ? 'default' : value;
+  }
+
+  bool _isMissingServerDbRoute(Object error) {
+    return error is DioException &&
+        error.response?.statusCode == 404 &&
+        error.requestOptions.path.startsWith('/api/server-db/');
+  }
+
+  Future<Map<String, dynamic>> _syncServerDatabase(List<String> config) {
+    return _postHelper('/api/server-db/sync/webdav', {
+      ..._webDavPayload(config),
+      'profile': _serverDbProfile,
+    });
+  }
+
+  Future<void> _importServerDatabaseFromHelper(List<String> config) async {
+    final syncData = await _syncServerDatabase(config);
+    final status = syncData['status'];
+    final metadata = status is Map ? status['metadata'] : null;
+    var sha256 = '';
+    final responseSha256 = syncData['sha256']?.toString() ?? '';
+    if (responseSha256.isNotEmpty) {
+      sha256 = responseSha256;
+    } else if (metadata is Map) {
+      sha256 = metadata['sha256']?.toString() ?? '';
+    }
+    final importedSha = appdata.implicitData['webServerDbImportSha256']
+        ?.toString();
+    if (syncData['skipped'] == true &&
+        sha256.isNotEmpty &&
+        importedSha == sha256) {
+      Log.info('Data Sync', 'Server DB already imported');
+      return;
+    }
+
+    try {
+      final appdataResponse = await _postHelper('/api/server-db/appdata', {
+        'profile': _serverDbProfile,
+      });
+      final remoteAppdata = appdataResponse['data'];
+      if (remoteAppdata is Map) {
+        appdata.syncData(remoteAppdata.cast<String, dynamic>());
+      }
+    } on DioException catch (e) {
+      if (e.response?.statusCode != 404) rethrow;
+    }
+
+    final dumps = <String, dynamic>{};
+    for (final entry in _serverDbEntries) {
+      try {
+        final dump = await _postHelper('/api/server-db/dump', {
+          'profile': _serverDbProfile,
+          'database': entry,
+        });
+        dumps[entry] = dump;
+      } on DioException catch (e) {
+        if (e.response?.statusCode != 404) rethrow;
+      }
+    }
+    final importStatus = await importWebServerDbDumps(dumps);
+    if (importStatus != null) {
+      appdata.implicitData[webPendingDbImportKey] = importStatus;
+    }
+    if (sha256.isNotEmpty) {
+      appdata.implicitData['webServerDbImportSha256'] = sha256;
+    }
+    appdata.writeImplicitData();
   }
 
   int _backupDay(String fileName) {
@@ -266,6 +352,22 @@ class DataSync with ChangeNotifier {
       }
       if (config.isEmpty) {
         return const Res(true);
+      }
+
+      try {
+        await _importServerDatabaseFromHelper(config);
+        Log.info("Data Sync", "Server DB synchronized successfully");
+        return const Res(true);
+      } catch (e, s) {
+        if (!_isMissingServerDbRoute(e)) {
+          Log.error("Data Sync", e, s);
+          _lastError = _formatError(e);
+          return Res.error(_lastError!);
+        }
+        Log.warning(
+          "Data Sync",
+          "Server DB helper route missing; falling back to legacy download: $e",
+        );
       }
 
       try {

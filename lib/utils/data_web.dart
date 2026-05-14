@@ -54,9 +54,23 @@ Future<File> exportAppData([bool sync = true]) async {
   };
   for (final entry in databaseEntries.entries) {
     try {
-      addArchiveFile(entry.key, exportDatabaseBytes(entry.value));
+      final dbBytes = exportDatabaseBytes(entry.value);
+      if (!_looksLikeSqliteDatabase(dbBytes)) {
+        throw FormatException(
+          'Exported ${entry.key} is not sqlite: '
+          '${_sqliteBytesSummary(dbBytes)}',
+        );
+      }
+      addArchiveFile(entry.key, dbBytes);
+      Log.info(
+        'Export Data',
+        'Added ${entry.key} (${dbBytes.length} bytes) to web backup',
+      );
     } catch (e, s) {
-      Log.warning('Export Data', 'Failed to export ${entry.key}: $e\n$s');
+      Log.error('Export Data', 'Failed to export ${entry.key}: $e', s);
+      throw StateError(
+        'Failed to export ${entry.key}; refusing to upload incomplete backup',
+      );
     }
   }
 
@@ -262,6 +276,7 @@ Future<Map<String, dynamic>?> importWebDbEntries(
     status['entries'] = await _importExtractedDatabases(
       presentEntries,
       databases,
+      archive,
     );
     final entries = (status['entries'] as Map).values.whereType<Map>();
     status['state'] = entries.every((entry) => entry['merged'] == true)
@@ -279,34 +294,117 @@ Future<Map<String, dynamic>?> importWebDbEntries(
   return status;
 }
 
+Future<Map<String, dynamic>?> importWebServerDbDumps(
+  Map<dynamic, dynamic> databases, {
+  DateTime? now,
+}) async {
+  final presentEntries = _webDbEntries
+      .where((entry) => databases.containsKey(entry))
+      .toList();
+  if (presentEntries.isEmpty) {
+    return null;
+  }
+
+  final status = <String, dynamic>{
+    'version': 1,
+    'state': 'pending_merge',
+    'createdAt': (now ?? DateTime.now()).toIso8601String(),
+    'source': 'server-db',
+    'entries': _summarizeExtractedDatabases(presentEntries, databases),
+  };
+
+  final result = (status['entries'] as Map).cast<String, dynamic>();
+  for (final entryName in presentEntries) {
+    final entryStatus = (result[entryName] as Map).cast<String, dynamic>();
+    final rawDatabase = databases[entryName];
+    final database = rawDatabase is Map
+        ? rawDatabase.cast<String, dynamic>()
+        : null;
+    final tables = database?['tables'];
+    try {
+      if (database?['ok'] != true || tables is! List) {
+        entryStatus['error'] =
+            database?['error']?.toString() ?? 'Missing sqlite table dump';
+        continue;
+      }
+      await _closeWebDatabase(entryName);
+      rebuildDatabaseFromDump(
+        _webDatabaseTargetPath(entryName),
+        tables,
+        indexes: database?['indexes'] is List
+            ? database!['indexes'] as List
+            : const [],
+      );
+      await _initWebDatabase(entryName);
+      entryStatus['merged'] = true;
+      entryStatus['importMode'] = 'server-dump';
+      entryStatus.remove('error');
+    } catch (e, s) {
+      entryStatus['merged'] = false;
+      entryStatus['error'] = e.toString();
+      Log.warning(
+        'Import Data',
+        'Failed to import server DB $entryName: $e\n$s',
+      );
+      try {
+        await _initWebDatabase(entryName);
+      } catch (_) {}
+    }
+  }
+
+  final entries = result.values.whereType<Map>();
+  status['state'] = entries.every((entry) => entry['merged'] == true)
+      ? 'merged'
+      : 'partial_merge';
+  return status;
+}
+
 Future<Map<String, dynamic>> _importExtractedDatabases(
   List<String> presentEntries,
   Map<dynamic, dynamic> databases,
+  Archive archive,
 ) async {
   final result = _summarizeExtractedDatabases(presentEntries, databases);
   for (final entryName in presentEntries) {
     final entryStatus = (result[entryName] as Map).cast<String, dynamic>();
     final rawDatabase = databases[entryName];
-    if (rawDatabase is! Map || rawDatabase['ok'] != true) {
-      continue;
-    }
-    final database = rawDatabase.cast<String, dynamic>();
-    final tables = database['tables'];
-    if (tables is! List) {
-      entryStatus['error'] = 'Missing table dump';
-      continue;
-    }
+    final database = rawDatabase is Map
+        ? rawDatabase.cast<String, dynamic>()
+        : null;
+    final tables = database?['tables'];
+    final rawBytes =
+        _helperRawDatabaseBytes(databases, entryName) ??
+        _archiveDatabaseBytes(archive, entryName);
     try {
-      await _closeWebDatabase(entryName);
-      rebuildDatabaseFromDump(
-        _webDatabaseTargetPath(entryName),
-        tables,
-        indexes: database['indexes'] is List
-            ? database['indexes'] as List
-            : const [],
-      );
+      if (database?['ok'] == true && tables is List) {
+        await _closeWebDatabase(entryName);
+        rebuildDatabaseFromDump(
+          _webDatabaseTargetPath(entryName),
+          tables,
+          indexes: database?['indexes'] is List
+              ? database!['indexes'] as List
+              : const [],
+        );
+        entryStatus['importMode'] = 'dump';
+      } else if (rawBytes != null) {
+        if (database != null && database['ok'] != true) {
+          Log.warning(
+            'Import Data',
+            'Helper table dump failed for $entryName '
+                '(${database['error'] ?? 'invalid response'}); importing raw sqlite bytes',
+          );
+        }
+        await _closeWebDatabase(entryName);
+        rebuildDatabaseFromBytes(_webDatabaseTargetPath(entryName), rawBytes);
+        entryStatus['importMode'] = 'raw';
+      } else {
+        entryStatus['error'] =
+            database?['error']?.toString() ?? 'Missing sqlite data';
+        continue;
+      }
       await _initWebDatabase(entryName);
       entryStatus['merged'] = true;
+      entryStatus.remove('error');
     } catch (e, s) {
       entryStatus['merged'] = false;
       entryStatus['error'] = e.toString();
@@ -317,6 +415,80 @@ Future<Map<String, dynamic>> _importExtractedDatabases(
     }
   }
   return result;
+}
+
+Uint8List? _archiveDatabaseBytes(Archive archive, String entryName) {
+  final entry = archive.findFile(entryName);
+  if (entry == null) {
+    return null;
+  }
+  final bytes = entry.readBytes();
+  if (bytes == null) {
+    return null;
+  }
+  return Uint8List.fromList(bytes);
+}
+
+Uint8List? _helperRawDatabaseBytes(
+  Map<dynamic, dynamic> extractedDatabases,
+  String entryName,
+) {
+  final extracted = extractedDatabases[entryName];
+  if (extracted is! Map) {
+    return null;
+  }
+  final rawBase64 = extracted['rawBase64'];
+  if (rawBase64 is! String || rawBase64.isEmpty) {
+    return null;
+  }
+  try {
+    final bytes = Uint8List.fromList(base64Decode(rawBase64));
+    if (_looksLikeSqliteDatabase(bytes)) {
+      return bytes;
+    }
+    Log.warning(
+      'Import Data',
+      'Helper raw bytes for $entryName are not sqlite: '
+          '${_sqliteBytesSummary(bytes)}',
+    );
+  } catch (e) {
+    Log.warning('Import Data', 'Failed to decode helper raw $entryName: $e');
+  }
+  return null;
+}
+
+bool _looksLikeSqliteDatabase(Uint8List bytes) {
+  if (bytes.length < 16) {
+    return false;
+  }
+  const sqliteHeader = 'SQLite format 3\u0000';
+  return ascii.decode(bytes.sublist(0, 16), allowInvalid: true) == sqliteHeader;
+}
+
+String _sqliteBytesSummary(Uint8List bytes) {
+  final header = bytes.take(16).toList(growable: false);
+  final headerHex = header
+      .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+      .join(' ');
+  final headerAscii = header
+      .map(
+        (byte) => byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : '.',
+      )
+      .join();
+  int? pageSize;
+  int? pageRemainder;
+  if (bytes.length >= 18) {
+    pageSize = (bytes[16] << 8) | bytes[17];
+    if (pageSize == 1) {
+      pageSize = 65536;
+    }
+    if (pageSize > 0) {
+      pageRemainder = bytes.length % pageSize;
+    }
+  }
+  return 'length=${bytes.length}, headerHex=$headerHex, '
+      'headerAscii="$headerAscii", pageSize=$pageSize, '
+      'pageRemainder=$pageRemainder';
 }
 
 String _webDatabaseTargetPath(String entryName) {

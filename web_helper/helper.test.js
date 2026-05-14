@@ -350,7 +350,10 @@ function connectWebSocket(urlText) {
         reject(new Error(`Unexpected websocket response: ${headers}`));
         return;
       }
-      assert.match(headers, new RegExp(`Sec-WebSocket-Accept: ${expectedAccept}`, "i"));
+      const acceptHeader = headers
+        .split("\r\n")
+        .find((line) => line.toLowerCase().startsWith("sec-websocket-accept:"));
+      assert.equal(acceptHeader, `Sec-WebSocket-Accept: ${expectedAccept}`);
       socket.removeAllListeners("data");
       const rest = response.subarray(headerEnd + 4);
       if (rest.length > 0) socket.unshift(rest);

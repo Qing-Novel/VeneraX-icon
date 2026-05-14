@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test --test-concurrency=1 helper.test.js"
+    "test": "node --test --test-concurrency=1 helper.test.js server_db.test.js"
   },
   "dependencies": {
     "playwright": "1.59.1"

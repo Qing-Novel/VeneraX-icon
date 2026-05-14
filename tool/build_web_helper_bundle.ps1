@@ -118,11 +118,14 @@ function Test-WebBuildFresh {
   if (Test-Path -LiteralPath $webBuildStampPath) {
     try {
       $stamp = Get-Content -LiteralPath $webBuildStampPath -Raw | ConvertFrom-Json
-      return $stamp.baseHref -eq $BaseHref `
+      if ($stamp.baseHref -eq $BaseHref `
         -and $stamp.target -eq "lib/main_web.dart" `
-        -and $stamp.fingerprint -eq $Fingerprint
+        -and $stamp.fingerprint -eq $Fingerprint) {
+        return $true
+      }
+      Write-Host "Build stamp is stale; checking file timestamps."
     } catch {
-      return $false
+      Write-Host "Build stamp is invalid; checking file timestamps."
     }
   } else {
     Write-Host "No build stamp found; using file timestamps once."
@@ -157,6 +160,19 @@ function Copy-WebBuild {
   }
 }
 
+function Reset-Directory {
+  param([string]$Path)
+
+  if (-not (Test-Path -LiteralPath $Path)) {
+    New-Item -ItemType Directory -Path $Path | Out-Null
+    return
+  }
+
+  foreach ($entry in Get-ChildItem -LiteralPath $Path -Force) {
+    Remove-Item -LiteralPath $entry.FullName -Recurse -Force
+  }
+}
+
 Push-Location $root
 try {
   if ($SkipFlutterBuild -and $ForceFlutterBuild) {
@@ -187,11 +203,10 @@ try {
     throw "build/web does not exist. Remove -SkipFlutterBuild or build Flutter Web first."
   }
 
-  if (Test-Path $outputPath) {
-    Remove-Item -LiteralPath $outputPath -Recurse -Force
+  if (-not (Test-Path -LiteralPath $outputPath)) {
+    New-Item -ItemType Directory -Path $outputPath | Out-Null
   }
-  New-Item -ItemType Directory -Path $outputPath | Out-Null
-  New-Item -ItemType Directory -Path $publicPath | Out-Null
+  Reset-Directory $publicPath
 
   Copy-Item -LiteralPath (Join-Path $helperPath "server.js") -Destination $outputPath
   Copy-Item -LiteralPath (Join-Path $helperPath "package.json") -Destination $outputPath
@@ -202,7 +217,7 @@ try {
   # Include the Rust fetch sidecar source (Dockerfile builds it from this dir).
   $sidecarSource = Join-Path $helperPath "rust-fetch"
   $sidecarTarget = Join-Path $outputPath "rust-fetch"
-  New-Item -ItemType Directory -Path $sidecarTarget | Out-Null
+  Reset-Directory $sidecarTarget
   Copy-Item -Path (Join-Path $sidecarSource "Cargo.toml") -Destination $sidecarTarget
   Copy-Item -Path (Join-Path $sidecarSource "rust-toolchain.toml") -Destination $sidecarTarget
   if (Test-Path (Join-Path $sidecarSource "Cargo.lock")) {

@@ -49,6 +49,18 @@ Uint8List exportDatabaseBytes(String path) {
   return File(path).readAsBytesSync();
 }
 
+void rebuildDatabaseFromBytes(String path, Uint8List bytes) {
+  for (final suffix in ['', '-wal', '-shm']) {
+    final file = File('$path$suffix');
+    if (file.existsSync()) {
+      file.deleteSync();
+    }
+  }
+  final file = File(path);
+  file.parent.createSync(recursive: true);
+  file.writeAsBytesSync(bytes, flush: true);
+}
+
 String _quoteSqlIdentifier(String value) {
   return '"${value.replaceAll('"', '""')}"';
 }

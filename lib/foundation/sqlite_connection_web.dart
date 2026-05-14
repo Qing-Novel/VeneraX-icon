@@ -65,6 +65,33 @@ Uint8List exportDatabaseBytes(String path) {
   }
 }
 
+void rebuildDatabaseFromBytes(String path, Uint8List bytes) {
+  closeSqliteDatabase(path);
+  final vfsName = _nextTransientVfsName('_imp');
+  final tempVfs = InMemoryFileSystem(name: vfsName);
+  _wasmSqlite!.registerVirtualFileSystem(tempVfs);
+  try {
+    final seed = _wasmSqlite!.open('/import.db', vfs: vfsName);
+    seed.dispose();
+    final buffer = tempVfs.fileData['/import.db'];
+    if (buffer == null) {
+      throw StateError('Import VFS produced no database file');
+    }
+    buffer.length = bytes.length;
+    buffer.setRange(0, bytes.length, bytes);
+
+    final src = _wasmSqlite!.open('/import.db', vfs: vfsName);
+    try {
+      final dst = openSqliteDatabase(path);
+      _replaceDatabaseContents(src, dst);
+    } finally {
+      src.dispose();
+    }
+  } finally {
+    _wasmSqlite!.unregisterVirtualFileSystem(tempVfs);
+  }
+}
+
 String _nextTransientVfsName(String prefix) {
   return '${prefix}_${DateTime.now().microsecondsSinceEpoch}_${_transientVfsId++}';
 }
@@ -103,6 +130,35 @@ Object? _decodeDumpValue(Object? value) {
     }
   }
   return value;
+}
+
+void _dropUserTables(CommonDatabase db) {
+  final existingTables = db
+      .select("SELECT name FROM sqlite_master WHERE type='table'")
+      .map((row) => row['name']?.toString())
+      .whereType<String>()
+      .where((name) => !name.toLowerCase().startsWith('sqlite_'))
+      .toList();
+  for (final table in existingTables) {
+    db.execute('DROP TABLE IF EXISTS ${_quoteSqlIdentifier(table)}');
+  }
+}
+
+void _replaceDatabaseContents(CommonDatabase src, CommonDatabase dst) {
+  dst.execute('PRAGMA foreign_keys = OFF;');
+  dst.execute('BEGIN IMMEDIATE;');
+  try {
+    _dropUserTables(dst);
+    _cloneDatabase(src, dst);
+    dst.execute('COMMIT;');
+  } catch (_) {
+    try {
+      dst.execute('ROLLBACK;');
+    } catch (_) {}
+    rethrow;
+  } finally {
+    dst.execute('PRAGMA foreign_keys = ON;');
+  }
 }
 
 void _cloneDatabase(CommonDatabase src, CommonDatabase dst) {
@@ -154,15 +210,7 @@ void rebuildDatabaseFromDump(
   db.execute('PRAGMA foreign_keys = OFF;');
   db.execute('BEGIN IMMEDIATE;');
   try {
-    final existingTables = db
-        .select("SELECT name FROM sqlite_master WHERE type='table'")
-        .map((row) => row['name']?.toString())
-        .whereType<String>()
-        .where((name) => !name.toLowerCase().startsWith('sqlite_'))
-        .toList();
-    for (final table in existingTables) {
-      db.execute('DROP TABLE IF EXISTS ${_quoteSqlIdentifier(table)}');
-    }
+    _dropUserTables(db);
 
     for (final table in tables) {
       if (table is! Map) {
