@@ -97,6 +97,7 @@ import { Ripple } from './ui/Ripple'
 import { IconButton } from './ui/IconButton'
 import { CircularProgress, LinearProgress } from './ui/ProgressIndicator'
 import { Switch } from './ui/Switch'
+import { ComicTile as ComicTilePrimitive } from './components/ComicTile'
 import { AppDataProvider } from './context/AppDataContext'
 import { LibraryProvider } from './context/LibraryContext'
 import { TasksProvider } from './context/TasksContext'
@@ -1140,7 +1141,17 @@ function ComicStrip({
   return (
     <div className="comic-strip">
       {items.map((item) => (
-        <ComicTile key={libraryItemKey(item)} item={item} compact onSelect={onSelect} />
+        <ComicTilePrimitive
+          key={libraryItemKey(item)}
+          data={{
+            id: item.comic_id,
+            sourceKey: item.source_key,
+            title: item.title,
+            cover: item.cover ?? null,
+            subtitle: item.subtitle ?? null,
+          }}
+          onOpen={() => onSelect?.(item)}
+        />
       ))}
     </div>
   )
