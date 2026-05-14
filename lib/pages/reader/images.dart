@@ -646,9 +646,10 @@ class _GalleryModeState extends State<_GalleryMode>
     if (provider.imageKey.startsWith("file://")) {
       return await File(provider.imageKey.substring(7)).readAsBytes();
     } else {
-      return (await CacheManager().findCache(
+      final cache = await CacheManager().findCache(
         "${provider.imageKey}@${provider.sourceKey}@${provider.cid}@${provider.eid}",
-      ))!.readAsBytes();
+      );
+      return cache?.readAsBytes();
     }
   }
 
@@ -1601,9 +1602,10 @@ class _ContinuousModeState extends State<_ContinuousMode>
     if (imageKey.startsWith("file://")) {
       return await File(imageKey.substring(7)).readAsBytes();
     } else {
-      return (await CacheManager().findCache(
+      final cache = await CacheManager().findCache(
         "$imageKey@${context.reader.type.sourceKey}@${context.reader.cid}@${context.reader.eid}",
-      ))!.readAsBytes();
+      );
+      return cache?.readAsBytes();
     }
   }
 

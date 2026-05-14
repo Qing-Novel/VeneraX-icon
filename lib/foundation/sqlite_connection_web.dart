@@ -32,7 +32,11 @@ Future<T> withDatabase<T>(
   Future<T> Function(CommonDatabase db) fn,
 ) async {
   final db = openSqliteDatabase(path);
-  return fn(db);
+  try {
+    return await fn(db);
+  } finally {
+    await flushSqliteDatabases();
+  }
 }
 
 void closeSqliteDatabase(String path) {

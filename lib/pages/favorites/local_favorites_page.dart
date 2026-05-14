@@ -281,6 +281,9 @@ class _LocalFavoritesPageState extends State<_LocalFavoritesPage> {
   }
 
   bool downloadComic(FavoriteItem c) {
+    if (App.isWeb) {
+      return false;
+    }
     var source = c.type.comicSource;
     if (source != null) {
       bool isDownloaded = LocalManager().isDownloaded(c.id, (c).type);
@@ -296,6 +299,10 @@ class _LocalFavoritesPageState extends State<_LocalFavoritesPage> {
   }
 
   void downloadSelected() {
+    if (App.isWeb) {
+      context.showMessage(message: "Download is not supported on WebPWA".tl);
+      return;
+    }
     int count = 0;
     for (var c in selectedComics.keys) {
       if (downloadComic(c as FavoriteItem)) {
@@ -747,8 +754,13 @@ class _LocalFavoritesPageState extends State<_LocalFavoritesPage> {
                   icon: Icons.download,
                   text: "Download".tl,
                   onClick: () {
-                    downloadComic(c as FavoriteItem);
-                    context.showMessage(message: "Download started".tl);
+                    if (downloadComic(c as FavoriteItem)) {
+                      context.showMessage(message: "Download started".tl);
+                    } else if (App.isWeb) {
+                      context.showMessage(
+                        message: "Download is not supported on WebPWA".tl,
+                      );
+                    }
                   },
                 ),
                 MenuEntry(

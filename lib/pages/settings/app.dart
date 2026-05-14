@@ -152,7 +152,7 @@ class _AppSettingsState extends State<AppSettings> {
             App.forceRebuild();
           },
         ).toSliver(),
-        if (!App.isLinux)
+        if (!App.isLinux && !App.isWeb)
           _SwitchSetting(
             title: "Authorization Required".tl,
             settingKey: "authorizationRequired",

@@ -1,6 +1,12 @@
 // Web stubs for dart:io-dependent IO utilities.
+// ignore_for_file: deprecated_member_use, avoid_web_libraries_in_flutter
+
+import 'dart:async';
+import 'dart:html' as html;
 import 'dart:js_interop';
 import 'dart:typed_data';
+
+import 'io_compat_web.dart' as webfs;
 
 export 'dart:typed_data';
 export 'io_compat_web.dart' show File, Directory, FileStat, IOSink, exit;
@@ -8,7 +14,9 @@ export 'io_compat_web.dart' show File, Directory, FileStat, IOSink, exit;
 int get pid => 0;
 
 class IO {
-  static bool get isSelectingFiles => false;
+  static bool _isSelectingFiles = false;
+
+  static bool get isSelectingFiles => _isSelectingFiles;
 }
 
 class FilePath {
@@ -55,13 +63,54 @@ String bytesToReadableString(int bytes) {
 
 class FileSelectResult {
   final String path;
-  FileSelectResult(this.path);
-  Future<void> saveTo(String dest) async {}
-  Future<Uint8List> readAsBytes() async => Uint8List(0);
-  String get name => path.split('/').last;
+  final Uint8List _bytes;
+  final String? _name;
+
+  FileSelectResult(this.path, [Uint8List? bytes, String? name])
+    : _bytes = bytes ?? Uint8List(0),
+      _name = name;
+
+  Future<void> saveTo(String dest) async {
+    await webfs.File(dest).writeAsBytes(_bytes);
+  }
+
+  Future<Uint8List> readAsBytes() async => Uint8List.fromList(_bytes);
+
+  String get name => _name ?? path.split('/').last;
 }
 
-Future<FileSelectResult?> selectFile({required List<String> ext}) async => null;
+Future<FileSelectResult?> selectFile({required List<String> ext}) async {
+  final completer = Completer<FileSelectResult?>();
+  final input = html.FileUploadInputElement();
+  input.accept = ext.map((e) => e.startsWith('.') ? e : '.$e').join(',');
+  input.style.display = 'none';
+
+  void complete(FileSelectResult? result) {
+    if (completer.isCompleted) return;
+    IO._isSelectingFiles = false;
+    input.remove();
+    completer.complete(result);
+  }
+
+  IO._isSelectingFiles = true;
+  html.document.body?.append(input);
+  input.onChange.first.then((_) async {
+    final file = input.files?.isNotEmpty == true ? input.files!.first : null;
+    if (file == null) {
+      complete(null);
+      return;
+    }
+    try {
+      final bytes = await _readBrowserFile(file);
+      complete(FileSelectResult('/selected/${file.name}', bytes, file.name));
+    } catch (_) {
+      complete(null);
+    }
+  });
+  input.addEventListener('cancel', (_) => complete(null));
+  input.click();
+  return completer.future;
+}
 Future<String?> selectDirectory() async => null;
 Future<String?> selectDirectoryIOS() async => null;
 Future<void> saveFile({
@@ -69,8 +118,33 @@ Future<void> saveFile({
   required String filename,
   dynamic file,
 }) async {
+  if (data == null && file != null) {
+    data = Uint8List.fromList(await file.readAsBytes());
+  }
   if (data == null) return;
-  _webDownloadBytes(data, filename);
+  _webDownloadBytes(data, sanitizeFileName(filename));
+}
+
+Future<Uint8List> _readBrowserFile(html.File file) async {
+  final reader = html.FileReader();
+  final completer = Completer<Uint8List>();
+  reader.onLoad.first.then((_) {
+    final result = reader.result;
+    if (result is ByteBuffer) {
+      completer.complete(Uint8List.view(result));
+    } else if (result is Uint8List) {
+      completer.complete(Uint8List.fromList(result));
+    } else {
+      completer.complete(Uint8List(0));
+    }
+  });
+  reader.onError.first.then((_) {
+    if (!completer.isCompleted) {
+      completer.completeError(reader.error ?? StateError('File read failed'));
+    }
+  });
+  reader.readAsArrayBuffer(file);
+  return completer.future;
 }
 
 @JS('eval')
