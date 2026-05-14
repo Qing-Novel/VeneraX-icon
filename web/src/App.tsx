@@ -1213,9 +1213,9 @@ function PageHeader({
 }) {
   return (
     <header className="page-header">
-      <button className="icon-button" type="button" aria-label="返回" onClick={onBack}>
+      <IconButton type="button" aria-label="返回" onClick={onBack}>
         <ChevronLeft size={20} />
-      </button>
+      </IconButton>
       <h1>{title}</h1>
       <div className="page-header-actions">{actions ?? <span />}</div>
     </header>
