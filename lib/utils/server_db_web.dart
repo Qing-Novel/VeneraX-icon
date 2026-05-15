@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:venera/foundation/appdata.dart';
+import 'package:venera/foundation/comic_source/comic_source.dart';
 import 'package:venera/foundation/comic_type.dart';
 import 'package:venera/foundation/favorites.dart';
 import 'package:venera/foundation/history.dart';
@@ -137,6 +138,19 @@ class ServerDbClient {
     return data is Map && data['ok'] == true;
   }
 
+  Future<bool> _postOk(String path, Map<String, dynamic> data) async {
+    final response = await _dio().post(
+      path,
+      data: {'profile': _profile, ...data},
+    );
+    final responseData = response.data;
+    return responseData is Map && responseData['ok'] == true;
+  }
+
+  Map<String, dynamic> _favoriteItemPayload(FavoriteItem item) {
+    return {...item.toJson(), 'time': item.time};
+  }
+
   FavoriteItem _favoriteItemFromMap(Map<String, dynamic> item) {
     final favorite = FavoriteItem.fromJson({
       'id': item['id'],
@@ -222,6 +236,212 @@ class ServerDbClient {
       }
       rethrow;
     }
+  }
+
+  Future<bool> createFavoriteFolder(
+    String name, {
+    bool renameWhenInvalidName = false,
+  }) {
+    return _postOk('/api/server-db/favorites/folder/create', {
+      'name': name,
+      'renameWhenInvalidName': renameWhenInvalidName,
+    });
+  }
+
+  Future<bool> deleteFavoriteFolder(String name) {
+    return _postOk('/api/server-db/favorites/folder/delete', {'name': name});
+  }
+
+  Future<bool> renameFavoriteFolder(String before, String after) {
+    return _postOk('/api/server-db/favorites/folder/rename', {
+      'before': before,
+      'after': after,
+    });
+  }
+
+  Future<bool> updateFavoriteFolderOrder(List<String> folders) {
+    return _postOk('/api/server-db/favorites/folder/order', {
+      'folders': folders,
+    });
+  }
+
+  Future<bool> linkFavoriteFolderToNetwork(
+    String folder,
+    String source,
+    String networkFolder,
+  ) {
+    return _postOk('/api/server-db/favorites/folder/link', {
+      'folder': folder,
+      'source': source,
+      'networkFolder': networkFolder,
+    });
+  }
+
+  Future<bool> addFavoriteItem(
+    String folder,
+    FavoriteItem item, {
+    int? order,
+    String? updateTime,
+  }) {
+    return _postOk('/api/server-db/favorites/add', {
+      'folder': folder,
+      'item': _favoriteItemPayload(item),
+      if (order != null) 'order': order,
+      if (updateTime != null) 'updateTime': updateTime,
+    });
+  }
+
+  Future<bool> deleteFavoriteItem(String folder, String id, ComicType type) {
+    return _postOk('/api/server-db/favorites/delete', {
+      'folder': folder,
+      'id': id,
+      'type': type.value,
+    });
+  }
+
+  Future<bool> batchDeleteFavoriteItems(
+    String folder,
+    List<FavoriteItem> items,
+  ) {
+    return _postOk('/api/server-db/favorites/batch-delete', {
+      'folder': folder,
+      'items': items
+          .map((item) => {'id': item.id, 'type': item.type.value})
+          .toList(),
+    });
+  }
+
+  Future<bool> batchDeleteFavoriteItemsInAllFolders(List<ComicID> items) {
+    return _postOk('/api/server-db/favorites/batch-delete-all', {
+      'items': items
+          .map((item) => {'id': item.id, 'type': item.type.value})
+          .toList(),
+    });
+  }
+
+  Future<bool> reorderFavoriteItems(String folder, List<FavoriteItem> items) {
+    return _postOk('/api/server-db/favorites/reorder', {
+      'folder': folder,
+      'items': [
+        for (var i = 0; i < items.length; i++)
+          {'id': items[i].id, 'type': items[i].type.value, 'order': i},
+      ],
+    });
+  }
+
+  Future<bool> updateFavoriteTags(
+    String folder,
+    String id,
+    ComicType? type,
+    List<String> tags,
+  ) {
+    return _postOk('/api/server-db/favorites/tags', {
+      'folder': folder,
+      'id': id,
+      if (type != null) 'type': type.value,
+      'tags': tags,
+    });
+  }
+
+  Future<bool> updateFavoriteInfo(String folder, FavoriteItem item) {
+    return _postOk('/api/server-db/favorites/info', {
+      'folder': folder,
+      'item': _favoriteItemPayload(item),
+    });
+  }
+
+  Future<bool> updateFavoriteUpdateTime(
+    String folder,
+    String id,
+    ComicType type,
+    String updateTime,
+    int lastCheckTime,
+  ) {
+    return _postOk('/api/server-db/favorites/update-time', {
+      'folder': folder,
+      'id': id,
+      'type': type.value,
+      'updateTime': updateTime,
+      'lastCheckTime': lastCheckTime,
+    });
+  }
+
+  Future<bool> updateFavoriteCheckTime(
+    String folder,
+    String id,
+    ComicType type,
+    int lastCheckTime,
+  ) {
+    return _postOk('/api/server-db/favorites/check-time', {
+      'folder': folder,
+      'id': id,
+      'type': type.value,
+      'lastCheckTime': lastCheckTime,
+    });
+  }
+
+  Future<bool> markFavoriteAsRead(String folder, String id, ComicType type) {
+    return _postOk('/api/server-db/favorites/mark-read', {
+      'folder': folder,
+      'id': id,
+      'type': type.value,
+    });
+  }
+
+  Future<bool> readFavorite(
+    String id,
+    ComicType type, {
+    required String moveMode,
+    String? followUpdatesFolder,
+  }) {
+    return _postOk('/api/server-db/favorites/read', {
+      'id': id,
+      'type': type.value,
+      'moveMode': moveMode,
+      if (followUpdatesFolder != null) 'followUpdatesFolder': followUpdatesFolder,
+    });
+  }
+
+  Future<bool> moveFavoriteItem(
+    String sourceFolder,
+    String targetFolder,
+    String id,
+    ComicType type,
+  ) {
+    return _postOk('/api/server-db/favorites/move', {
+      'sourceFolder': sourceFolder,
+      'targetFolder': targetFolder,
+      'id': id,
+      'type': type.value,
+    });
+  }
+
+  Future<bool> batchMoveFavoriteItems(
+    String sourceFolder,
+    String targetFolder,
+    List<FavoriteItem> items,
+  ) {
+    return _postOk('/api/server-db/favorites/batch-move', {
+      'sourceFolder': sourceFolder,
+      'targetFolder': targetFolder,
+      'items': items
+          .map((item) => {'id': item.id, 'type': item.type.value})
+          .toList(),
+    });
+  }
+
+  Future<bool> batchCopyFavoriteItems(
+    String sourceFolder,
+    String targetFolder,
+    List<FavoriteItem> items,
+  ) {
+    return _postOk('/api/server-db/favorites/batch-copy', {
+      'sourceFolder': sourceFolder,
+      'targetFolder': targetFolder,
+      'items': items
+          .map((item) => {'id': item.id, 'type': item.type.value})
+          .toList(),
+    });
   }
 
   Future<List<String>?> findFavoriteFolders(String id, ComicType type) async {

@@ -451,6 +451,7 @@ class DataSync with ChangeNotifier {
       final previousVersion = _dataVersion();
       final nextVersion = previousVersion + 1;
       try {
+        await LocalFavoritesManager().waitServerFavoriteSync();
         appdata.settings['dataVersion'] = nextVersion;
         await appdata.saveData(false);
         final daysSinceEpoch =
