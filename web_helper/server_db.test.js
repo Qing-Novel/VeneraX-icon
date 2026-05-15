@@ -388,6 +388,110 @@ test("WebDAV sync can persist and reuse helper-side configuration", async () => 
   }
 });
 
+test("WebDAV backup list sorts same-day versions before sync selection", async () => {
+  const serverDataDir = await mkdtemp(join(tmpdir(), "venera-server-db-"));
+  const backupBytes = buildZipArchive([
+    {
+      name: "appdata.json",
+      data: Buffer.from('{"settings":{},"searchHistory":[]}'),
+    },
+  ]);
+  const seenRequests = [];
+
+  const upstream = createHttpServer(async (req, res) => {
+    seenRequests.push(`${req.method} ${req.url}`);
+    if (req.method === "PROPFIND") {
+      res.writeHead(207, { "Content-Type": "application/xml" });
+      res.end(`<?xml version="1.0"?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response><d:href>/20400-2.venera</d:href></d:response>
+  <d:response><d:href>/latest.venera</d:href></d:response>
+  <d:response><d:href>/20399-99.venera</d:href></d:response>
+  <d:response><d:href>/20400-10.venera</d:href></d:response>
+  <d:response><d:href>/20400-3.venera</d:href></d:response>
+</d:multistatus>`);
+      return;
+    }
+    if (req.method === "GET" && req.url === "/20400-10.venera") {
+      res.writeHead(200, { "Content-Type": "application/octet-stream" });
+      res.end(backupBytes);
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+
+  const upstreamUrl = await listen(upstream);
+  const helper = createServer({ serverDataDir });
+  const helperUrl = await listen(helper);
+
+  try {
+    const listResponse = await fetch(`${helperUrl}/sync/webdav/list`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: upstreamUrl, user: "user", pass: "pass" }),
+    });
+    assert.equal(listResponse.status, 200);
+    assert.deepEqual((await listResponse.json()).files, [
+      "20400-10.venera",
+      "20400-3.venera",
+      "20400-2.venera",
+      "20399-99.venera",
+    ]);
+
+    const syncResponse = await fetch(`${helperUrl}/api/server-db/sync/webdav`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        profile: "reader",
+        url: upstreamUrl,
+        user: "user",
+        pass: "pass",
+      }),
+    });
+    assert.equal(syncResponse.status, 200);
+    const syncPayload = await syncResponse.json();
+    assert.equal(syncPayload.remoteFileName, "20400-10.venera");
+    assert.deepEqual(syncPayload.status.metadata.availableFiles, [
+      "20400-10.venera",
+      "20400-3.venera",
+      "20400-2.venera",
+      "20399-99.venera",
+    ]);
+    assert.deepEqual(seenRequests, [
+      "PROPFIND /",
+      "PROPFIND /",
+      "GET /20400-10.venera",
+    ]);
+  } finally {
+    await close(helper);
+    await close(upstream);
+    await rm(serverDataDir, { recursive: true, force: true });
+  }
+});
+
+test("server-db appdata returns native empty payload for new profile", async () => {
+  const serverDataDir = await mkdtemp(join(tmpdir(), "venera-server-db-"));
+  const helper = createServer({ serverDataDir });
+  const helperUrl = await listen(helper);
+
+  try {
+    const response = await fetch(`${helperUrl}/api/server-db/appdata`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profile: "fresh" }),
+    });
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.ok, true);
+    assert.equal(payload.profile, "fresh");
+    assert.deepEqual(payload.data, { settings: {}, searchHistory: [] });
+  } finally {
+    await close(helper);
+    await rm(serverDataDir, { recursive: true, force: true });
+  }
+});
+
 test("static web assets use gzip and revalidation headers", async () => {
   const staticDir = await mkdtemp(join(tmpdir(), "venera-static-"));
   const js = "console.log('venera');\n".repeat(200);
@@ -1973,8 +2077,26 @@ test("server-db upload builds WebDAV backup from helper-side databases", async (
     });
     assert.equal(emptyUploadResponse.status, 200);
     const emptyUploadPayload = await emptyUploadResponse.json();
-    assert.equal(emptyUploadPayload.databaseCount, 0);
-    assert.deepEqual(emptyUploadPayload.entries, ["appdata.json"]);
+    assert.equal(emptyUploadPayload.databaseCount, 4);
+    for (const entryName of [
+      "appdata.json",
+      "data/venera.db",
+      "history.db",
+      "local_favorite.db",
+      "cookie.db",
+    ]) {
+      assert.equal(emptyUploadPayload.entries.includes(entryName), true);
+    }
+    const emptyZipEntries = zipCentralEntries(uploaded);
+    for (const entryName of [
+      "appdata.json",
+      "data/venera.db",
+      "history.db",
+      "local_favorite.db",
+      "cookie.db",
+    ]) {
+      assert.equal(emptyZipEntries.has(entryName), true);
+    }
     seenRequests.length = 0;
     uploaded = null;
 
@@ -2016,11 +2138,12 @@ test("server-db upload builds WebDAV backup from helper-side databases", async (
     assert.equal(uploadResponse.status, 200);
     const uploadPayload = await uploadResponse.json();
     assert.equal(uploadPayload.ok, true);
-    assert.equal(uploadPayload.databaseCount, 3);
+    assert.equal(uploadPayload.databaseCount, 4);
     assert.equal(uploadPayload.entries.includes("appdata.json"), true);
     assert.equal(uploadPayload.entries.includes("data/venera.db"), true);
     assert.equal(uploadPayload.entries.includes("history.db"), true);
     assert.equal(uploadPayload.entries.includes("local_favorite.db"), true);
+    assert.equal(uploadPayload.entries.includes("cookie.db"), true);
     assert.equal(uploadPayload.entries.includes("comic_source/demo.js"), true);
     assert.equal(uploadPayload.entries.includes("comic_source/demo.data"), true);
     assert.equal(uploadPayload.fileName, "1700000000200.venera");
@@ -2030,6 +2153,7 @@ test("server-db upload builds WebDAV backup from helper-side databases", async (
     assert.equal(zipEntries.has("data/venera.db"), true);
     assert.equal(zipEntries.has("history.db"), true);
     assert.equal(zipEntries.has("local_favorite.db"), true);
+    assert.equal(zipEntries.has("cookie.db"), true);
     assert.equal(zipEntries.has("comic_source/demo.js"), true);
     assert.equal(zipEntries.has("comic_source/demo.data"), true);
     for (const entryName of [

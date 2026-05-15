@@ -1872,12 +1872,38 @@ function backupTimestamp(fileName) {
   return Number.parseInt(fileName.replace(/\.venera$/i, ""), 10) || 0;
 }
 
+function backupSortKey(fileName) {
+  const name = String(fileName || "");
+  const lowerName = name.toLowerCase();
+  if (lowerName === "latest.venera") {
+    return { fallback: true, day: -1, version: -1, name };
+  }
+  const stem = name.replace(/\.venera$/i, "");
+  const parts = stem.split("-");
+  let day = Number.parseInt(parts[0], 10);
+  if (!Number.isFinite(day)) day = 0;
+  if (day > 1000000000) day = Math.floor(day / 86400000);
+  let version = parts.length > 1 ? Number.parseInt(parts[1], 10) : -1;
+  if (!Number.isFinite(version)) version = -1;
+  return { fallback: false, day, version, name };
+}
+
 function sortBackupFiles(files, newestFirst = true) {
-  return [...files].sort((a, b) =>
-    newestFirst
-      ? backupTimestamp(b) - backupTimestamp(a)
-      : backupTimestamp(a) - backupTimestamp(b),
-  );
+  return [...files].sort((a, b) => {
+    const aKey = backupSortKey(a);
+    const bKey = backupSortKey(b);
+    if (aKey.fallback !== bKey.fallback) {
+      return aKey.fallback ? 1 : -1;
+    }
+    const dayCompare = aKey.day - bKey.day;
+    if (dayCompare !== 0) return newestFirst ? -dayCompare : dayCompare;
+    const versionCompare = aKey.version - bKey.version;
+    if (versionCompare !== 0) {
+      return newestFirst ? -versionCompare : versionCompare;
+    }
+    const nameCompare = aKey.name.localeCompare(bKey.name);
+    return newestFirst ? -nameCompare : nameCompare;
+  });
 }
 
 function backupSha256(buffer) {
@@ -2578,25 +2604,35 @@ function importServerDbCookieDbToJar(profileRoot, cookieJar, persistCookieJar) {
   return importCookieRecords(cookieJar, records, persistCookieJar);
 }
 
-async function exportCookieJarToServerDbCookieDb(profileRoot, cookieJar) {
+function ensureCookieDbSchema(db) {
+  db.exec(`
+    create table if not exists cookies (
+      name TEXT NOT NULL,
+      value TEXT NOT NULL,
+      domain TEXT NOT NULL,
+      path TEXT,
+      expires INTEGER,
+      secure INTEGER,
+      httpOnly INTEGER,
+      PRIMARY KEY (name, domain, path)
+    );
+  `);
+}
+
+async function exportCookieJarToServerDbCookieDb(
+  profileRoot,
+  cookieJar,
+  { createIfEmpty = false } = {},
+) {
   const cookies = exportCookieRecords(cookieJar);
   const filePath = serverDbEntryPath(profileRoot, "cookie.db");
-  if (cookies.length === 0 && !existsSync(filePath)) return false;
+  if (cookies.length === 0 && !existsSync(filePath) && !createIfEmpty) {
+    return false;
+  }
   const db = await openWritableSqliteDatabase(filePath);
   try {
-    db.exec(`
-      create table if not exists cookies (
-        name TEXT NOT NULL,
-        value TEXT NOT NULL,
-        domain TEXT NOT NULL,
-        path TEXT,
-        expires INTEGER,
-        secure INTEGER,
-        httpOnly INTEGER,
-        PRIMARY KEY (name, domain, path)
-      );
-      delete from cookies;
-    `);
+    ensureCookieDbSchema(db);
+    db.exec("delete from cookies;");
     const statement = db.prepare(`
       insert or replace into cookies (
         name, value, domain, path, expires, secure, httpOnly
@@ -2617,6 +2653,10 @@ async function exportCookieJarToServerDbCookieDb(profileRoot, cookieJar) {
   } finally {
     db.close();
   }
+}
+
+function emptyServerDbAppdata() {
+  return { settings: {}, searchHistory: [] };
 }
 
 function writeServerDbAppdata(profileRoot, data) {
@@ -2695,7 +2735,50 @@ function readServerDbComicSourcePayload(profileRoot) {
   }));
 }
 
-function buildServerDbBackup(profileRoot, appdataPayload, comicSourcesPayload) {
+function ensureEmptySqliteDbSchema(db) {
+  db.exec(`
+    create table if not exists __venera_empty_marker (id integer primary key);
+    drop table __venera_empty_marker;
+  `);
+}
+
+async function ensureServerDbBackupDatabase(profileRoot, entryName, initialize) {
+  const filePath = serverDbEntryPath(profileRoot, entryName);
+  if (existsSync(filePath) && statSync(filePath).size > 0) return;
+  const db = await openWritableSqliteDatabase(filePath);
+  try {
+    initialize(db);
+  } finally {
+    db.close();
+  }
+}
+
+async function ensureServerDbBackupDatabases(profileRoot) {
+  await ensureServerDbBackupDatabase(
+    profileRoot,
+    "data/venera.db",
+    ensureEmptySqliteDbSchema,
+  );
+  await ensureServerDbBackupDatabase(
+    profileRoot,
+    "history.db",
+    ensureHistoryDbSchema,
+  );
+  await ensureServerDbBackupDatabase(
+    profileRoot,
+    "local_favorite.db",
+    ensureFavoriteDbSchema,
+  );
+  await ensureServerDbBackupDatabase(
+    profileRoot,
+    "cookie.db",
+    ensureCookieDbSchema,
+  );
+}
+
+async function buildServerDbBackup(profileRoot, appdataPayload, comicSourcesPayload) {
+  await ensureServerDbBackupDatabases(profileRoot);
+
   const entries = [];
   let databaseCount = 0;
   let appdataBytes = null;
@@ -2706,6 +2789,10 @@ function buildServerDbBackup(profileRoot, appdataPayload, comicSourcesPayload) {
     const appdataPath = join(profileRoot, "appdata.json");
     if (existsSync(appdataPath)) {
       appdataBytes = readFileSync(appdataPath);
+    } else {
+      appdataBytes = Buffer.from(
+        JSON.stringify(emptyServerDbAppdata(), null, 2),
+      );
     }
   }
 
@@ -4255,14 +4342,15 @@ async function handleServerDbRoute({
 
   if (parsedUrl.pathname === "/api/server-db/appdata") {
     const appdataPath = join(profileRoot, "appdata.json");
-    if (!existsSync(appdataPath)) {
-      throw createHttpError(404, "Server appdata not found");
-    }
     let data;
-    try {
-      data = JSON.parse(readFileSync(appdataPath, "utf8"));
-    } catch {
-      throw createHttpError(422, "Server appdata is invalid JSON");
+    if (existsSync(appdataPath)) {
+      try {
+        data = JSON.parse(readFileSync(appdataPath, "utf8"));
+      } catch {
+        throw createHttpError(422, "Server appdata is invalid JSON");
+      }
+    } else {
+      data = emptyServerDbAppdata();
     }
     sendJson(res, 200, {
       ok: true,
@@ -5188,8 +5276,10 @@ async function handleServerDbRoute({
           .map((name) => normalizeWebDavBackupName(name, { required: false }))
           .filter((name) => name != null && name !== "latest.venera")
       : [];
-    await exportCookieJarToServerDbCookieDb(profileRoot, cookieJar);
-    const backup = buildServerDbBackup(
+    await exportCookieJarToServerDbCookieDb(profileRoot, cookieJar, {
+      createIfEmpty: true,
+    });
+    const backup = await buildServerDbBackup(
       profileRoot,
       payload.appdata,
       payload.comicSources,
