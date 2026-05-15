@@ -35,6 +35,13 @@ class ServerFavoritePage {
   final int total;
 }
 
+class ServerImageFavoritePage {
+  const ServerImageFavoritePage({required this.items, required this.total});
+
+  final List<ImageFavoritesComic> items;
+  final int total;
+}
+
 class ServerDbClient {
   const ServerDbClient();
 
@@ -159,12 +166,123 @@ class ServerDbClient {
       'type': item['type'],
       'tags': item['tags'],
       'coverPath': item['coverPath'],
+      'lastUpdateTime': item['lastUpdateTime'],
+      'hasNewUpdate': item['hasNewUpdate'],
+      'lastCheckTime': item['lastCheckTime'],
     });
     final time = item['time']?.toString();
     if (time != null && time.isNotEmpty) {
       favorite.time = time;
     }
     return favorite;
+  }
+
+  Map<String, dynamic> _imageFavoritePayload(ImageFavoritesComic comic) {
+    return {
+      'id': comic.id,
+      'title': comic.title,
+      'subTitle': comic.subTitle,
+      'author': comic.author,
+      'tags': comic.tags,
+      'translatedTags': comic.translatedTags,
+      'time': comic.time.millisecondsSinceEpoch,
+      'maxPage': comic.maxPage,
+      'sourceKey': comic.sourceKey,
+      'imageFavoritesEp': comic.imageFavoritesEp
+          .map((ep) => ep.toJson())
+          .toList(),
+      'other': comic.other,
+    };
+  }
+
+  ImageFavoritesComic _imageFavoriteFromMap(Map<String, dynamic> item) {
+    final rawEps = item['imageFavoritesEp'] ?? item['image_favorites_ep'];
+    final eps = rawEps is List ? rawEps : const [];
+    final imageFavoritesEp = eps.whereType<Map>().map((rawEp) {
+      final ep = rawEp.cast<String, dynamic>();
+      final epIndex = (ep['ep'] as num?)?.toInt() ?? 0;
+      final eid = ep['eid']?.toString() ?? '';
+      final epName = ep['epName']?.toString() ?? '';
+      final maxPage = (ep['maxPage'] as num?)?.toInt() ?? 1;
+      final rawImages = ep['imageFavorites'];
+      final images = rawImages is List ? rawImages : const [];
+      return ImageFavoritesEp(
+        eid,
+        epIndex,
+        images.whereType<Map>().map((rawImage) {
+          final image = rawImage.cast<String, dynamic>();
+          return ImageFavorite(
+            (image['page'] as num?)?.toInt() ?? 0,
+            image['imageKey']?.toString() ?? '',
+            image['isAutoFavorite'] as bool?,
+            eid,
+            item['id']?.toString() ?? '',
+            epIndex,
+            item['sourceKey']?.toString() ?? '',
+            epName,
+          );
+        }).toList(),
+        epName,
+        maxPage,
+      );
+    }).toList();
+    final rawOther = item['other'];
+    return ImageFavoritesComic(
+      item['id']?.toString() ?? '',
+      imageFavoritesEp,
+      item['title']?.toString() ?? '',
+      item['sourceKey']?.toString() ?? '',
+      (item['tags'] as List?)?.map((e) => e.toString()).toList() ??
+          const <String>[],
+      (item['translatedTags'] as List?)?.map((e) => e.toString()).toList() ??
+          const <String>[],
+      DateTime.fromMillisecondsSinceEpoch(
+        (item['time'] as num?)?.toInt() ?? 0,
+      ),
+      item['author']?.toString() ?? '',
+      rawOther is Map ? rawOther.cast<String, dynamic>() : <String, dynamic>{},
+      item['subTitle']?.toString() ?? '',
+      (item['maxPage'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  Future<ServerImageFavoritePage?> listImageFavorites({
+    int limit = 500,
+    int offset = 0,
+  }) async {
+    try {
+      final response = await _dio().post(
+        '/api/server-db/image-favorites/list',
+        data: {'profile': _profile, 'limit': limit, 'offset': offset},
+      );
+      final data = response.data;
+      if (data is! Map || data['ok'] != true) {
+        return null;
+      }
+      final rawItems = data['items'];
+      final items = rawItems is List
+          ? rawItems
+                .whereType<Map>()
+                .map((item) => _imageFavoriteFromMap(item.cast<String, dynamic>()))
+                .toList()
+          : <ImageFavoritesComic>[];
+      final total = data['total'];
+      return ServerImageFavoritePage(
+        items: items,
+        total: total is num ? total.toInt() : items.length,
+      );
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) {
+        return null;
+      }
+      rethrow;
+    }
+  }
+
+  Future<bool> replaceImageFavorites(List<ImageFavoritesComic> comics) {
+    return _postOk('/api/server-db/image-favorites/replace', {
+      'items': comics.map(_imageFavoritePayload).toList(),
+    });
   }
 
   Future<List<ServerFavoriteFolder>?> listFavoriteFolders() async {

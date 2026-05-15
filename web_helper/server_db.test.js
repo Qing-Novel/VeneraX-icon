@@ -23,6 +23,34 @@ function close(server) {
   });
 }
 
+function zipCentralEntries(zipBuf) {
+  let eocdOffset = -1;
+  const maxSearch = Math.min(zipBuf.length, 65535 + 22);
+  for (let i = zipBuf.length - 22; i >= zipBuf.length - maxSearch && i >= 0; i--) {
+    if (zipBuf.readUInt32LE(i) === 0x06054b50) {
+      eocdOffset = i;
+      break;
+    }
+  }
+  assert.notEqual(eocdOffset, -1);
+  const count = zipBuf.readUInt16LE(eocdOffset + 10);
+  let offset = zipBuf.readUInt32LE(eocdOffset + 16);
+  const entries = new Map();
+  for (let i = 0; i < count; i++) {
+    assert.equal(zipBuf.readUInt32LE(offset), 0x02014b50);
+    const compression = zipBuf.readUInt16LE(offset + 10);
+    const compressedSize = zipBuf.readUInt32LE(offset + 20);
+    const uncompressedSize = zipBuf.readUInt32LE(offset + 24);
+    const fileNameLength = zipBuf.readUInt16LE(offset + 28);
+    const extraLength = zipBuf.readUInt16LE(offset + 30);
+    const commentLength = zipBuf.readUInt16LE(offset + 32);
+    const name = zipBuf.subarray(offset + 46, offset + 46 + fileNameLength).toString("utf8");
+    entries.set(name, { compression, compressedSize, uncompressedSize });
+    offset += 46 + fileNameLength + extraLength + commentLength;
+  }
+  return entries;
+}
+
 function encodeSqliteVarint(value) {
   let n = BigInt(value);
   const bytes = [];
@@ -675,6 +703,122 @@ test("server-db history write APIs upsert, delete and clear rows", async () => {
     ).json();
     assert.equal(statusPayload.metadata.dirty, true);
     assert.equal(statusPayload.metadata.dirtyReason, "history-clear");
+  } finally {
+    await close(helper);
+    await rm(serverDataDir, { recursive: true, force: true });
+  }
+});
+
+test("server-db image favorites replace writes history db table", async () => {
+  const serverDataDir = await mkdtemp(join(tmpdir(), "venera-server-db-"));
+  const helper = createServer({ serverDataDir });
+  const helperUrl = await listen(helper);
+  const post = (path, body) =>
+    fetch(`${helperUrl}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profile: "reader", ...body }),
+    });
+
+  try {
+    const response = await post("/api/server-db/image-favorites/replace", {
+      items: [
+        {
+          id: "comic-image",
+          title: "Image Comic",
+          subTitle: "Sub",
+          author: "Author",
+          tags: ["tag-a", "tag-b"],
+          translatedTags: ["translated"],
+          time: 1778815200000,
+          maxPage: 10,
+          sourceKey: "source",
+          imageFavoritesEp: [
+            {
+              eid: "ep-1",
+              ep: 1,
+              maxPage: 10,
+              epName: "Chapter 1",
+              imageFavorites: [{ page: 2, imageKey: "image-key" }],
+            },
+          ],
+          other: { from: "test" },
+        },
+      ],
+    });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).count, 1);
+
+    const listPayload = await (
+      await post("/api/server-db/image-favorites/list", {})
+    ).json();
+    assert.equal(listPayload.total, 1);
+    assert.equal(listPayload.items[0].id, "comic-image");
+    assert.equal(listPayload.items[0].sourceKey, "source");
+    assert.deepEqual(listPayload.items[0].tags, ["tag-a", "tag-b"]);
+
+    const dump = await (
+      await post("/api/server-db/dump", { database: "history.db" })
+    ).json();
+    const table = dump.tables.find((item) => item.name === "image_favorites");
+    assert.equal(table.rows.length, 1);
+    const row = Object.fromEntries(
+      table.columns.map((column, index) => [column, table.rows[0][index]]),
+    );
+    assert.equal(row.id, "comic-image");
+    assert.equal(row.source_key, "source");
+    assert.equal(row.tags, "tag-a,tag-b");
+    assert.equal(row.translated_tags, "translated");
+    assert.equal(
+      JSON.parse(row.image_favorites_ep)[0].imageFavorites[0].imageKey,
+      "image-key",
+    );
+  } finally {
+    await close(helper);
+    await rm(serverDataDir, { recursive: true, force: true });
+  }
+});
+
+test("server-db read APIs return empty payloads for new profiles", async () => {
+  const serverDataDir = await mkdtemp(join(tmpdir(), "venera-server-db-"));
+  const helper = createServer({ serverDataDir });
+  const helperUrl = await listen(helper);
+  const post = (path, body) =>
+    fetch(`${helperUrl}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profile: "new-reader", ...body }),
+    });
+
+  try {
+    const historyResponse = await post("/api/server-db/history/list", {});
+    assert.equal(historyResponse.status, 200);
+    assert.deepEqual(await historyResponse.json(), {
+      ok: true,
+      profile: "new-reader",
+      total: 0,
+      items: [],
+    });
+
+    const foldersResponse = await post("/api/server-db/favorites/folders", {});
+    assert.equal(foldersResponse.status, 200);
+    assert.deepEqual(await foldersResponse.json(), {
+      ok: true,
+      profile: "new-reader",
+      folders: [],
+    });
+
+    const listResponse = await post("/api/server-db/favorites/list", {
+      folder: "Default",
+    });
+    assert.equal(listResponse.status, 200);
+    assert.deepEqual(await listResponse.json(), {
+      ok: true,
+      profile: "new-reader",
+      folder: "Default",
+      total: 0,
+      items: [],
+    });
   } finally {
     await close(helper);
     await rm(serverDataDir, { recursive: true, force: true });
@@ -1508,7 +1652,12 @@ test("server-db upload builds WebDAV backup from helper-side databases", async (
       fileName: "1700000000200.venera",
       appdata: { settings: {} },
     });
-    assert.equal(emptyUploadResponse.status, 409);
+    assert.equal(emptyUploadResponse.status, 200);
+    const emptyUploadPayload = await emptyUploadResponse.json();
+    assert.equal(emptyUploadPayload.databaseCount, 0);
+    assert.deepEqual(emptyUploadPayload.entries, ["appdata.json"]);
+    seenRequests.length = 0;
+    uploaded = null;
 
     await post("/api/server-db/history/upsert", {
       history: {
@@ -1546,9 +1695,16 @@ test("server-db upload builds WebDAV backup from helper-side databases", async (
     assert.equal(uploadPayload.entries.includes("comic_source/demo.data"), true);
     assert.equal(uploadPayload.fileName, "1700000000200.venera");
     assert.equal(Buffer.isBuffer(uploaded), true);
-    assert.equal(uploaded.includes(Buffer.from('"theme": "dark"')), true);
-    assert.equal(uploaded.includes(Buffer.from("function demo() {}")), true);
-    assert.equal(uploaded.includes(Buffer.from("{\"ok\":true}")), true);
+    const zipEntries = zipCentralEntries(uploaded);
+    assert.equal(zipEntries.has("appdata.json"), true);
+    assert.equal(zipEntries.has("history.db"), true);
+    assert.equal(zipEntries.has("comic_source/demo.js"), true);
+    assert.equal(zipEntries.has("comic_source/demo.data"), true);
+    assert.equal(zipEntries.get("history.db").compression, 8);
+    assert.ok(
+      zipEntries.get("history.db").compressedSize <
+        zipEntries.get("history.db").uncompressedSize,
+    );
 
     const extractResponse = await fetch(`${helperUrl}/sync/webdav/extract-db`, {
       method: "POST",

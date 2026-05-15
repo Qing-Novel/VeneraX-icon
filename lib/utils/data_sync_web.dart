@@ -7,6 +7,7 @@ import 'package:venera/foundation/app.dart';
 import 'package:venera/foundation/appdata.dart';
 import 'package:venera/foundation/comic_source/comic_source.dart';
 import 'package:venera/foundation/favorites.dart';
+import 'package:venera/foundation/history.dart';
 import 'package:venera/foundation/log.dart';
 import 'package:venera/foundation/res.dart';
 import 'package:venera/utils/data_web.dart';
@@ -28,6 +29,7 @@ class DataSync with ChangeNotifier {
     }
     LocalFavoritesManager().addListener(onDataChanged);
     ComicSourceManager().addListener(onDataChanged);
+    ImageFavoriteManager().addListener(onDataChanged);
   }
 
   static DataSync? instance;
@@ -66,6 +68,12 @@ class DataSync with ChangeNotifier {
   void onDataChanged() {
     _pendingAutoUpload?.cancel();
     _pendingAutoUpload = null;
+    if (isEnabled) {
+      _pendingAutoUpload = Timer(const Duration(seconds: 2), () {
+        _pendingAutoUpload = null;
+        unawaited(uploadData());
+      });
+    }
   }
 
   List<String>? _validateConfig() {
@@ -122,6 +130,10 @@ class DataSync with ChangeNotifier {
 
   Map<String, dynamic> _appdataJsonForSync() {
     final data = jsonDecode(jsonEncode(appdata.toJson())) as Map<String, dynamic>;
+    final implicitData = appdata.implicitDataForSync();
+    if (implicitData.isNotEmpty) {
+      data['implicitData'] = jsonDecode(jsonEncode(implicitData));
+    }
     final settings = data['settings'];
     if (settings is Map) {
       final disabledFields = appdata.splitField(
@@ -313,6 +325,12 @@ class DataSync with ChangeNotifier {
     }
 
     await _importServerComicSourcesFromHelper();
+    if (HistoryManager().isInitialized) {
+      await ImageFavoriteManager().hydrateServerImageFavorites(
+        force: true,
+        clearWhenRemoteEmpty: true,
+      );
+    }
 
     if (!hydrateLocalCache) {
       if (sha256.isNotEmpty) {
@@ -451,7 +469,9 @@ class DataSync with ChangeNotifier {
       final previousVersion = _dataVersion();
       final nextVersion = previousVersion + 1;
       try {
+        await HistoryManager().waitServerHistorySync();
         await LocalFavoritesManager().waitServerFavoriteSync();
+        await ImageFavoriteManager().syncServerImageFavorites();
         appdata.settings['dataVersion'] = nextVersion;
         await appdata.saveData(false);
         final daysSinceEpoch =

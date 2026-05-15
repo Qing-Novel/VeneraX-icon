@@ -5,9 +5,13 @@ import 'package:venera/foundation/log.dart';
 import 'package:venera/foundation/sqlite_connection.dart';
 import 'package:venera/utils/ext.dart';
 
-import 'cookie_jar_io.dart' if (dart.library.html) 'cookie_jar_web.dart';
+import 'cookie_jar_io.dart'
+    if (dart.library.html) 'cookie_jar_web.dart'
+    if (dart.library.js_interop) 'cookie_jar_web.dart';
 
-export 'cookie_jar_io.dart' if (dart.library.html) 'cookie_jar_web.dart';
+export 'cookie_jar_io.dart'
+    if (dart.library.html) 'cookie_jar_web.dart'
+    if (dart.library.js_interop) 'cookie_jar_web.dart';
 
 List<Cookie> cookiesFromPlatformCookies(
   Iterable<dynamic>? cookies, {

@@ -4,10 +4,15 @@ param(
   [ValidateSet("Auto", "Always", "Skip")]
   [string]$FlutterBuildMode = "Auto",
   [switch]$SkipFlutterBuild,
-  [switch]$ForceFlutterBuild
+  [switch]$ForceFlutterBuild,
+  [ValidateSet("O1","O2","O3","O4")]
+  [string]$DartOptLevel = "O4",
+  [switch]$Dev
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($Dev) { $DartOptLevel = "O1" }
 
 $root = Split-Path -Parent $PSScriptRoot
 $outputPath = if ([System.IO.Path]::IsPathRooted($Output)) {
@@ -37,9 +42,14 @@ $flutterInputPaths = @(
 )
 $legacyWebBuildEntries = @("dist", "node_modules", "public", "src")
 
+$script:cachedInputFiles = $null
+
 function Get-FlutterInputFiles {
   param([string[]]$Paths)
 
+  if ($null -ne $script:cachedInputFiles) {
+    return $script:cachedInputFiles
+  }
   $files = New-Object System.Collections.Generic.List[System.IO.FileInfo]
   foreach ($path in $Paths) {
     if (-not (Test-Path -LiteralPath $path)) {
@@ -54,7 +64,8 @@ function Get-FlutterInputFiles {
       $files.Add($item)
     }
   }
-  return $files | Sort-Object FullName
+  $script:cachedInputFiles = $files | Sort-Object FullName
+  return $script:cachedInputFiles
 }
 
 function Get-RelativeFingerprintPath {
@@ -143,7 +154,12 @@ function Test-WebBuildFresh {
 function Invoke-FlutterWebBuild {
   param([string]$Fingerprint)
 
-  flutter build web --target lib/main_web.dart --release --base-href $BaseHref --no-wasm-dry-run --no-tree-shake-icons
+  $dartOptArgs = @()
+  if ($DartOptLevel -ne "O4") {
+    $dartOptArgs = @("--dart2js-optimization", $DartOptLevel)
+    Write-Host "Using dart2js optimization level: $DartOptLevel"
+  }
+  flutter build web --target lib/main_web.dart --release --base-href $BaseHref --no-wasm-dry-run --no-tree-shake-icons @dartOptArgs
   if ($LASTEXITCODE -ne 0) {
     throw "flutter build web failed with exit code $LASTEXITCODE"
   }
@@ -151,12 +167,11 @@ function Invoke-FlutterWebBuild {
 }
 
 function Copy-WebBuild {
-  foreach ($entry in Get-ChildItem -LiteralPath $webBuildPath -Force) {
-    if ($legacyWebBuildEntries -contains $entry.Name) {
-      Write-Host "Skip stale web build entry: $($entry.Name)"
-      continue
-    }
-    Copy-Item -LiteralPath $entry.FullName -Destination $publicPath -Recurse -Force
+  $excludeDirs = $legacyWebBuildEntries + @(".venera-build-stamp.json", ".venera-build.lock")
+  $xdArgs = $excludeDirs | ForEach-Object { "/XF"; $_; "/XD"; $_ }
+  robocopy $webBuildPath $publicPath /MIR @xdArgs /NFL /NDL /NJH /NJS /NC /NS /NP
+  if ($LASTEXITCODE -ge 8) {
+    throw "robocopy failed with exit code $LASTEXITCODE"
   }
 }
 
@@ -206,7 +221,6 @@ try {
   if (-not (Test-Path -LiteralPath $outputPath)) {
     New-Item -ItemType Directory -Path $outputPath | Out-Null
   }
-  Reset-Directory $publicPath
 
   Copy-Item -LiteralPath (Join-Path $helperPath "server.js") -Destination $outputPath
   Copy-Item -LiteralPath (Join-Path $helperPath "package.json") -Destination $outputPath
@@ -255,6 +269,7 @@ $env:PORT="60098"
 $env:VENERA_STATIC_DIR="./public"
 $env:VENERA_BROWSER_DATA_DIR="./browser-data"
 $env:VENERA_COOKIE_JAR_PATH="./browser-data/helper-cookies.json"
+$env:VENERA_SERVER_DATA_DIR="./server-data"
 node server.js
 ```
 
@@ -285,6 +300,7 @@ public/       Flutter Web 静态文件
 server.js     Web Helper 后端，同时托管 public/
 compose.yaml  NAS/Docker Compose 部署入口
 browser-data/ 运行后自动生成，保存 helper 浏览器数据和 cookie jar
+server-data/  运行后自动生成，保存 WebDAV 配置和服务端用户数据库
 ```
 '@
   Set-Content -LiteralPath (Join-Path $outputPath "README.md") -Value $readme -Encoding UTF8

@@ -1,1 +1,3 @@
-export 'memory_info_native.dart' if (dart.library.html) 'memory_info_web.dart';
+export 'memory_info_native.dart'
+    if (dart.library.html) 'memory_info_web.dart'
+    if (dart.library.js_interop) 'memory_info_web.dart';

@@ -112,7 +112,7 @@ void updateFolderBase(
 
   for (var comic in comics) {
     if (!ignoreCheckTime) {
-      var lastCheckTime = comic.lastCheckTime;
+      var lastCheckTime = comic.lastCheckDateTime;
       if (lastCheckTime != null &&
           DateTime.now().difference(lastCheckTime).inDays < 1) {
         current++;
@@ -206,7 +206,7 @@ Stream<UpdateProgress> updateFolder(
 
 Future<String> getUpdatedComicsAsJson(String folder) async {
   var comics = LocalFavoritesManager().getComicsWithUpdatesInfo(folder);
-  var updatedComics = comics.where((c) => c.hasNewUpdate).toList();
+  var updatedComics = comics.where((c) => c.hasNewUpdate == true).toList();
   var jsonList = updatedComics
       .map(
         (c) => {

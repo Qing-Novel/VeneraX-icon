@@ -4,6 +4,7 @@
 FROM rust:1.95-slim-bookworm AS sidecar-builder
 WORKDIR /build
 
+ARG DEBIAN_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian
 ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 ENV CARGO_HTTP_TIMEOUT=120
 ENV RUSTUP_TOOLCHAIN=1.95.0
@@ -11,7 +12,10 @@ ENV RUSTUP_NO_UPDATE_CHECK=1
 ENV RUSTUP_DIST_SERVER=https://rsproxy.cn
 ENV RUSTUP_UPDATE_ROOT=https://rsproxy.cn/rustup
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN set -eux; \
+    sed -i "s|http://deb.debian.org/debian|${DEBIAN_MIRROR}|g; s|http://security.debian.org/debian-security|${DEBIAN_MIRROR}-security|g" /etc/apt/sources.list.d/debian.sources; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
     pkg-config \
     libssl-dev \
     git \
@@ -33,6 +37,7 @@ FROM mcr.microsoft.com/playwright:v1.59.1-noble
 
 WORKDIR /app
 
+ARG NPM_REGISTRY=https://registry.npmmirror.com
 ENV NODE_ENV=production
 ENV PORT=8080
 ENV VENERA_STATIC_DIR=/app/public
@@ -42,7 +47,7 @@ ENV VENERA_BROWSER_HEADLESS=true
 ENV VENERA_FETCH_SIDECAR=http://127.0.0.1:9876
 
 COPY package.json server.js ./
-RUN npm install --omit=dev
+RUN npm config set registry "${NPM_REGISTRY}" && npm install --omit=dev
 
 # Bring in the compiled sidecar binary
 COPY --from=sidecar-builder /build/target/release/venera-fetch /usr/local/bin/venera-fetch

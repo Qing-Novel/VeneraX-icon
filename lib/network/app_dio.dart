@@ -7,7 +7,9 @@ import 'package:venera/foundation/log.dart';
 import 'package:venera/network/cache.dart';
 import 'package:venera/network/cors_proxy.dart';
 
-import 'app_dio_io.dart' if (dart.library.html) 'app_dio_web_stub.dart';
+import 'app_dio_io.dart'
+    if (dart.library.html) 'app_dio_web_stub.dart'
+    if (dart.library.js_interop) 'app_dio_web_stub.dart';
 import 'cloudflare.dart';
 import 'cookie_jar.dart';
 

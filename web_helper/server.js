@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { inflateRawSync } from "node:zlib";
+import { deflateRawSync, inflateRawSync } from "node:zlib";
 import {
   createReadStream,
   existsSync,
@@ -1985,37 +1985,41 @@ function buildStoredZip(entries) {
   for (const entry of entries) {
     const nameBytes = Buffer.from(entry.name, "utf8");
     const data = Buffer.from(entry.data);
+    const deflated = deflateRawSync(data, { level: 9 });
+    const compressed = deflated.length < data.length ? deflated : data;
+    const compressionMethod = compressed === data ? 0 : 8;
     const checksum = crc32(data);
+    const flags = 0x0800;
 
     const localHeader = Buffer.alloc(30);
     localHeader.writeUInt32LE(0x04034b50, 0);
     localHeader.writeUInt16LE(20, 4);
-    localHeader.writeUInt16LE(0, 6);
-    localHeader.writeUInt16LE(0, 8);
+    localHeader.writeUInt16LE(flags, 6);
+    localHeader.writeUInt16LE(compressionMethod, 8);
     localHeader.writeUInt16LE(0, 10);
     localHeader.writeUInt16LE(0, 12);
     localHeader.writeUInt32LE(checksum, 14);
-    localHeader.writeUInt32LE(data.length, 18);
+    localHeader.writeUInt32LE(compressed.length, 18);
     localHeader.writeUInt32LE(data.length, 22);
     localHeader.writeUInt16LE(nameBytes.length, 26);
-    localParts.push(localHeader, nameBytes, data);
+    localParts.push(localHeader, nameBytes, compressed);
 
     const centralHeader = Buffer.alloc(46);
     centralHeader.writeUInt32LE(0x02014b50, 0);
     centralHeader.writeUInt16LE(20, 4);
     centralHeader.writeUInt16LE(20, 6);
-    centralHeader.writeUInt16LE(0, 8);
-    centralHeader.writeUInt16LE(0, 10);
+    centralHeader.writeUInt16LE(flags, 8);
+    centralHeader.writeUInt16LE(compressionMethod, 10);
     centralHeader.writeUInt16LE(0, 12);
     centralHeader.writeUInt16LE(0, 14);
     centralHeader.writeUInt32LE(checksum, 16);
-    centralHeader.writeUInt32LE(data.length, 20);
+    centralHeader.writeUInt32LE(compressed.length, 20);
     centralHeader.writeUInt32LE(data.length, 24);
     centralHeader.writeUInt16LE(nameBytes.length, 28);
     centralHeader.writeUInt32LE(localOffset, 42);
     centralParts.push(centralHeader, nameBytes);
 
-    localOffset += localHeader.length + nameBytes.length + data.length;
+    localOffset += localHeader.length + nameBytes.length + compressed.length;
   }
 
   const centralDirectory = Buffer.concat(centralParts);
@@ -2710,7 +2714,7 @@ function buildServerDbBackup(profileRoot, appdataPayload, comicSourcesPayload) {
     databaseCount += 1;
   }
 
-  if (databaseCount === 0) {
+  if (databaseCount === 0 && entries.length === 0) {
     throw createHttpError(409, "Server DB is not initialized");
   }
   return {
@@ -2723,7 +2727,7 @@ function buildServerDbBackup(profileRoot, appdataPayload, comicSourcesPayload) {
 function historyRowsFromServerDb(profileRoot, { limit = 100, offset = 0 } = {}) {
   const filePath = serverDbEntryPath(profileRoot, "history.db");
   if (!existsSync(filePath)) {
-    throw createHttpError(404, "Server history DB not found");
+    return { total: 0, items: [] };
   }
   const data = extractSqliteData(readFileSync(filePath));
   const table = data.tables.find((item) => item.name === "history");
@@ -2755,6 +2759,55 @@ function historyRowsFromServerDb(profileRoot, { limit = 100, offset = 0 } = {}) 
   rows.sort((a, b) => b.time - a.time);
   const safeOffset = Math.max(0, Number(offset) || 0);
   const safeLimit = Math.max(1, Math.min(500, Number(limit) || 100));
+  return {
+    total: rows.length,
+    items: rows.slice(safeOffset, safeOffset + safeLimit),
+  };
+}
+
+function imageFavoriteRowsFromServerDb(
+  profileRoot,
+  { limit = 500, offset = 0 } = {},
+) {
+  const filePath = serverDbEntryPath(profileRoot, "history.db");
+  if (!existsSync(filePath)) {
+    return { total: 0, items: [] };
+  }
+  const data = extractSqliteData(readFileSync(filePath));
+  const table = data.tables.find((item) => item.name === "image_favorites");
+  if (!table) {
+    return { total: 0, items: [] };
+  }
+  const rows = table.rows.map((row) => {
+    const item = {};
+    for (let index = 0; index < table.columns.length; index++) {
+      item[table.columns[index]] = row[index];
+    }
+    let imageFavoritesEp = [];
+    let other = {};
+    try {
+      imageFavoritesEp = JSON.parse(String(item.image_favorites_ep || "[]"));
+    } catch {}
+    try {
+      other = JSON.parse(String(item.other || "{}"));
+    } catch {}
+    return {
+      id: String(item.id || ""),
+      title: String(item.title || ""),
+      subTitle: String(item.sub_title || ""),
+      author: String(item.author || ""),
+      tags: splitFavoriteTags(item.tags),
+      translatedTags: splitFavoriteTags(item.translated_tags),
+      time: Number(item.time || 0),
+      maxPage: Number(item.max_page || 0),
+      sourceKey: String(item.source_key || ""),
+      imageFavoritesEp: Array.isArray(imageFavoritesEp) ? imageFavoritesEp : [],
+      other: other && typeof other === "object" ? other : {},
+    };
+  });
+  rows.sort((a, b) => b.time - a.time);
+  const safeOffset = Math.max(0, Number(offset) || 0);
+  const safeLimit = Math.max(1, Math.min(500, Number(limit) || 500));
   return {
     total: rows.length,
     items: rows.slice(safeOffset, safeOffset + safeLimit),
@@ -2795,6 +2848,25 @@ function ensureHistoryDbSchema(db) {
   }
 }
 
+function ensureImageFavoritesDbSchema(db) {
+  db.exec(`
+    create table if not exists image_favorites (
+      id text,
+      title text not null,
+      sub_title text,
+      author text,
+      tags text,
+      translated_tags text,
+      time int,
+      max_page int,
+      source_key text not null,
+      image_favorites_ep text not null,
+      other text not null,
+      primary key (id, source_key)
+    );
+  `);
+}
+
 function normalizeHistoryPayload(payload) {
   const history = payload?.history;
   if (!history || typeof history !== "object") {
@@ -2826,6 +2898,47 @@ function normalizeHistoryPayload(payload) {
     readEpisode,
     maxPage: nullableNumber(history.max_page),
     chapterGroup: nullableNumber(history.chapter_group),
+  };
+}
+
+function normalizeImageFavoritePayload(item) {
+  if (!item || typeof item !== "object") {
+    throw createHttpError(400, "Invalid image favorite item");
+  }
+  const id = String(item.id || "").trim();
+  const sourceKey = String(item.sourceKey ?? item.source_key ?? "").trim();
+  if (!id || !sourceKey) {
+    throw createHttpError(400, "Invalid image favorite item");
+  }
+  const listValue = (value) => {
+    if (Array.isArray(value)) return value.map((entry) => String(entry)).join(",");
+    return String(value || "");
+  };
+  const numberValue = (value, fallback = 0) => {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : fallback;
+  };
+  const imageFavoritesEp = Array.isArray(item.imageFavoritesEp)
+    ? item.imageFavoritesEp
+    : Array.isArray(item.image_favorites_ep)
+      ? item.image_favorites_ep
+      : [];
+  const other =
+    item.other && typeof item.other === "object" && !Array.isArray(item.other)
+      ? item.other
+      : {};
+  return {
+    id,
+    title: String(item.title || ""),
+    subTitle: String(item.subTitle ?? item.sub_title ?? ""),
+    author: String(item.author || ""),
+    tags: listValue(item.tags),
+    translatedTags: listValue(item.translatedTags ?? item.translated_tags),
+    time: numberValue(item.time, Date.now()),
+    maxPage: numberValue(item.maxPage ?? item.max_page, 0),
+    sourceKey,
+    imageFavoritesEp: JSON.stringify(imageFavoritesEp),
+    other: JSON.stringify(other),
   };
 }
 
@@ -3521,7 +3634,66 @@ async function handleServerDbRoute({
     return true;
   }
 
+  if (parsedUrl.pathname === "/api/server-db/image-favorites/list") {
+    const data = imageFavoriteRowsFromServerDb(profileRoot, {
+      limit: payload.limit,
+      offset: payload.offset,
+    });
+    sendJson(res, 200, { ok: true, profile: profileId, ...data });
+    return true;
+  }
+
+  if (parsedUrl.pathname === "/api/server-db/image-favorites/replace") {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { error: "Method not allowed" });
+      return true;
+    }
+    const items = Array.isArray(payload.items)
+      ? payload.items.map(normalizeImageFavoritePayload)
+      : [];
+    await withWritableHistoryDb(profileRoot, (db) => {
+      ensureImageFavoritesDbSchema(db);
+      db.exec("BEGIN TRANSACTION;");
+      try {
+        db.exec("delete from image_favorites;");
+        const statement = db.prepare(`
+          insert or replace into image_favorites (
+            id, title, sub_title, author, tags, translated_tags, time,
+            max_page, source_key, image_favorites_ep, other
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        `);
+        for (const item of items) {
+          statement.run(
+            item.id,
+            item.title,
+            item.subTitle,
+            item.author,
+            item.tags,
+            item.translatedTags,
+            item.time,
+            item.maxPage,
+            item.sourceKey,
+            item.imageFavoritesEp,
+            item.other,
+          );
+        }
+        db.exec("COMMIT;");
+      } catch (err) {
+        db.exec("ROLLBACK;");
+        throw err;
+      }
+    });
+    markServerDbDirty(profileRoot, "image-favorites-replace");
+    sendJson(res, 200, { ok: true, profile: profileId, count: items.length });
+    return true;
+  }
+
   if (parsedUrl.pathname === "/api/server-db/favorites/folders") {
+    const filePath = serverDbEntryPath(profileRoot, "local_favorite.db");
+    if (!existsSync(filePath)) {
+      sendJson(res, 200, { ok: true, profile: profileId, folders: [] });
+      return true;
+    }
     const folders = await withFavoriteDb(profileRoot, favoriteFoldersFromDb);
     sendJson(res, 200, { ok: true, profile: profileId, folders });
     return true;
@@ -3666,6 +3838,17 @@ async function handleServerDbRoute({
     const folder = String(payload.folder || "").trim();
     if (!folder) {
       throw createHttpError(400, "Missing favorites folder");
+    }
+    const filePath = serverDbEntryPath(profileRoot, "local_favorite.db");
+    if (!existsSync(filePath)) {
+      sendJson(res, 200, {
+        ok: true,
+        profile: profileId,
+        folder,
+        total: 0,
+        items: [],
+      });
+      return true;
     }
     const safeOffset = Math.max(0, Number(payload.offset) || 0);
     const safeLimit = Math.max(1, Math.min(500, Number(payload.limit) || 100));

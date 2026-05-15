@@ -35,7 +35,7 @@ class HomePage extends StatelessWidget {
         const _SearchBar(),
         const _SyncDataWidget(),
         const _History(),
-        const _Local(),
+        if (!App.isWeb) const _Local(),
         const FollowUpdatesWidget(),
         const _ComicSourceWidget(),
         const ImageFavorites(),

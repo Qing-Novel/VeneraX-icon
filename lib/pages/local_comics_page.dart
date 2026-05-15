@@ -381,7 +381,7 @@ class _LocalComicsPageState extends State<LocalComicsPage> {
     await showDialog(
       context: App.rootContext,
       builder: (context) {
-        bool removeComicFile = true;
+        bool removeComicFile = !App.isWeb;
         bool removeFavoriteAndHistory = true;
         return StatefulBuilder(builder: (context, state) {
           return ContentDialog(
@@ -397,19 +397,20 @@ class _LocalComicsPageState extends State<LocalComicsPage> {
                     });
                   },
                 ),
-                CheckboxListTile(
-                  title: Text("Also remove files on disk".tl),
-                  value: removeComicFile,
-                  onChanged: (v) {
-                    state(() {
-                      removeComicFile = !removeComicFile;
-                    });
-                  },
-                )
+                if (!App.isWeb)
+                  CheckboxListTile(
+                    title: Text("Also remove files on disk".tl),
+                    value: removeComicFile,
+                    onChanged: (v) {
+                      state(() {
+                        removeComicFile = !removeComicFile;
+                      });
+                    },
+                  )
               ],
             ),
             actions: [
-              if (comics.length == 1 && comics.first.hasChapters)
+              if (!App.isWeb && comics.length == 1 && comics.first.hasChapters)
                 TextButton(
                   child: Text("Delete Chapters".tl),
                   onPressed: () {

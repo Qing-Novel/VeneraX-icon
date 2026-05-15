@@ -38,6 +38,8 @@ class ComicSourceManager with ChangeNotifier, Init {
 
   ComicSourceManager._create();
 
+  final _recoverableParseWarnings = <String>{};
+
   factory ComicSourceManager() => _instance ??= ComicSourceManager._create();
 
   List<ComicSource> all() => List.from(_sources);
@@ -67,7 +69,7 @@ class ComicSourceManager with ChangeNotifier, Init {
           _addParsedSource(source, entity.name);
         } catch (e, s) {
           if (e is ComicSourceParseException && e.isRecoverable) {
-            Log.warning("ComicSource", "Skipped ${entity.name}: $e");
+            _logRecoverableParseWarning(entity.name, e);
           } else {
             Log.error("ComicSource", e, s);
           }
@@ -78,6 +80,7 @@ class ComicSourceManager with ChangeNotifier, Init {
 
   Future reload() async {
     _sources.clear();
+    _recoverableParseWarnings.clear();
     JsEngine().runCode("ComicSource.sources = {};");
     await doInit();
     notifyListeners();
@@ -91,14 +94,35 @@ class ComicSourceManager with ChangeNotifier, Init {
 
   bool _addParsedSource(ComicSource source, String sourceName) {
     if (find(source.key) != null) {
-      Log.warning(
-        "ComicSource",
-        "Skipped $sourceName: key(${source.key}) already exists",
+      _logRecoverableParseWarning(
+        sourceName,
+        ComicSourceParseException(
+          "key(${source.key}) already exists",
+          isRecoverable: true,
+        ),
       );
       return false;
     }
     _sources.add(source);
     return true;
+  }
+
+  void _logRecoverableParseWarning(
+    String sourceName,
+    ComicSourceParseException error,
+  ) {
+    if (error.message == "Invalid Content") {
+      return;
+    }
+    if (error.message.startsWith("key(") &&
+        error.message.endsWith("already exists")) {
+      return;
+    }
+    final warningKey = "$sourceName:${error.message}";
+    if (!_recoverableParseWarnings.add(warningKey)) {
+      return;
+    }
+    Log.warning("ComicSource", "Skipped $sourceName: $error");
   }
 
   void remove(String key) {

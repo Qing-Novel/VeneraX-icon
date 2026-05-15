@@ -171,7 +171,7 @@ class _FollowUpdatesPageState extends AutomaticGlobalState<FollowUpdatesPage> {
     if (folder != null) {
       allComics = LocalFavoritesManager().getComicsWithUpdatesInfo(folder!);
       sortComics();
-      updatedComics = allComics.where((c) => c.hasNewUpdate).toList();
+      updatedComics = allComics.where((c) => c.hasNewUpdate == true).toList();
     }
   }
 
@@ -671,7 +671,7 @@ class _FollowUpdatesPageState extends AutomaticGlobalState<FollowUpdatesPage> {
     setState(() {
       allComics = LocalFavoritesManager().getComicsWithUpdatesInfo(folder!);
       sortComics();
-      updatedComics = allComics.where((c) => c.hasNewUpdate).toList();
+      updatedComics = allComics.where((c) => c.hasNewUpdate == true).toList();
     });
   }
 

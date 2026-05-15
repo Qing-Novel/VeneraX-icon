@@ -16,7 +16,9 @@ import 'package:venera/utils/opencc.dart';
 import 'package:venera/utils/tags_translation.dart';
 import 'package:venera/utils/translations.dart';
 import 'foundation/appdata.dart';
-import 'init_native.dart' if (dart.library.html) 'init_web.dart';
+import 'init_native.dart'
+    if (dart.library.html) 'init_web.dart'
+    if (dart.library.js_interop) 'init_web.dart';
 
 extension _FutureInit<T> on Future<T> {
   /// Prevent unhandled exception
@@ -36,11 +38,11 @@ Future<void> init() async {
   if (!kIsWeb) {
     await SingleInstanceCookieJar.createInstance();
   }
+  await initPlatformServices().wait();
+  await AppTranslation.init().wait();
   try {
     var futures = [
-      initPlatformServices(),
       App.initComponents(),
-      AppTranslation.init().wait(),
       TagsTranslation.readData().wait(),
       JsEngine().init().wait(),
       ComicSourceManager().init().wait(),

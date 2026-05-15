@@ -369,6 +369,22 @@ class HistoryManager with ChangeNotifier {
     }
   }
 
+  final _pendingServerHistoryWrites = <Future<void>>{};
+
+  void _trackServerHistoryWrite(Future<void> pending) {
+    _pendingServerHistoryWrites.add(pending);
+    unawaited(
+      pending.whenComplete(() {
+        _pendingServerHistoryWrites.remove(pending);
+      }),
+    );
+  }
+
+  Future<void> waitServerHistorySync() async {
+    if (!kIsWeb || _pendingServerHistoryWrites.isEmpty) return;
+    await Future.wait(_pendingServerHistoryWrites.toList());
+  }
+
   void _writeLocalHistory(History newItem) {
     _db.execute(_insertHistorySql, _historySqlArgs(newItem));
   }
@@ -412,12 +428,13 @@ class HistoryManager with ChangeNotifier {
   void addHistory(History newItem) {
     if (!isInitialized) return;
     if (kIsWeb) {
-      unawaited(() async {
+      final pending = () async {
         await _upsertServerHistory(newItem);
         _writeLocalHistory(newItem);
         _cacheAddedHistory(newItem);
         notifyListeners();
-      }());
+      }();
+      _trackServerHistoryWrite(pending);
       return;
     }
     _writeLocalHistory(newItem);
@@ -428,12 +445,13 @@ class HistoryManager with ChangeNotifier {
   void clearHistory() {
     if (!isInitialized) return;
     if (kIsWeb) {
-      unawaited(() async {
+      final pending = () async {
         await _clearServerHistory();
         _db.execute("delete from history;");
         updateCache();
         notifyListeners();
-      }());
+      }();
+      _trackServerHistoryWrite(pending);
       return;
     }
     _db.execute("delete from history;");
@@ -470,12 +488,13 @@ class HistoryManager with ChangeNotifier {
   void clearUnfavoritedHistory() {
     if (!isInitialized) return;
     if (kIsWeb) {
-      unawaited(() async {
+      final pending = () async {
         await _clearServerUnfavoritedHistory();
         _clearLocalUnfavoritedHistory();
         updateCache();
         notifyListeners();
-      }());
+      }();
+      _trackServerHistoryWrite(pending);
       return;
     }
     _clearLocalUnfavoritedHistory();

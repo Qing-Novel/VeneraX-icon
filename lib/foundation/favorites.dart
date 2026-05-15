@@ -33,6 +33,9 @@ class FavoriteItem implements Comic {
   String id;
   String coverPath;
   late String time;
+  String? lastUpdateTime;
+  bool? hasNewUpdate;
+  int? lastCheckTime;
 
   FavoriteItem({
     required this.id,
@@ -118,6 +121,9 @@ class FavoriteItem implements Comic {
       "tags": tags,
       "id": id,
       "coverPath": coverPath,
+      if (lastUpdateTime != null) "lastUpdateTime": lastUpdateTime,
+      if (hasNewUpdate != null) "hasNewUpdate": hasNewUpdate,
+      if (lastCheckTime != null) "lastCheckTime": lastCheckTime,
     };
   }
 
@@ -129,7 +135,7 @@ class FavoriteItem implements Comic {
       type =
           SourcePlatformResolver.sourceKeyFromLegacyInt(type)?.hashCode ?? type;
     }
-    return FavoriteItem(
+    final favorite = FavoriteItem(
       id: json["id"] ?? json['target'],
       name: json["name"],
       author: json["author"],
@@ -137,6 +143,19 @@ class FavoriteItem implements Comic {
       type: ComicType(type),
       tags: List<String>.from(json["tags"] ?? []),
     );
+    favorite.lastUpdateTime =
+        json["lastUpdateTime"]?.toString() ?? json["last_update_time"]?.toString();
+    final hasNewUpdate = json["hasNewUpdate"] ?? json["has_new_update"];
+    if (hasNewUpdate is bool) {
+      favorite.hasNewUpdate = hasNewUpdate;
+    } else if (hasNewUpdate is num) {
+      favorite.hasNewUpdate = hasNewUpdate != 0;
+    }
+    final lastCheckTime = json["lastCheckTime"] ?? json["last_check_time"];
+    if (lastCheckTime is num) {
+      favorite.lastCheckTime = lastCheckTime.toInt();
+    }
+    return favorite;
   }
 }
 
@@ -157,26 +176,27 @@ class FavoriteItemWithFolderInfo extends FavoriteItem {
 class FavoriteItemWithUpdateInfo extends FavoriteItem {
   String? updateTime;
 
-  DateTime? lastCheckTime;
-
-  bool hasNewUpdate;
+  DateTime? get lastCheckDateTime => lastCheckTime == null
+      ? null
+      : DateTime.fromMillisecondsSinceEpoch(lastCheckTime!);
 
   FavoriteItemWithUpdateInfo(
     FavoriteItem item,
     this.updateTime,
-    this.hasNewUpdate,
+    bool hasNewUpdate,
     int? lastCheckTime,
-  ) : lastCheckTime = lastCheckTime == null
-          ? null
-          : DateTime.fromMillisecondsSinceEpoch(lastCheckTime),
-      super(
+  ) : super(
         id: item.id,
         name: item.name,
         coverPath: item.coverPath,
         author: item.author,
         type: item.type,
         tags: item.tags,
-      );
+      ) {
+    lastUpdateTime = updateTime;
+    this.hasNewUpdate = hasNewUpdate;
+    this.lastCheckTime = lastCheckTime;
+  }
 
   @override
   String get description {
@@ -529,20 +549,33 @@ class LocalFavoritesManager with ChangeNotifier {
         displayOrder,
       ],
     );
-    if (updateTime != null) {
-      var columns = _db.select("""
-      pragma table_info("$folder");
-    """);
-      if (columns.any((element) => element["name"] == "last_update_time")) {
-        _db.execute(
-          """
-          update "$folder"
-          set last_update_time = ?
-          where id == ? and type == ?;
-        """,
-          [updateTime, comic.id, comic.type.value],
-        );
+    final lastUpdateTime = comic.lastUpdateTime ?? updateTime;
+    final hasNewUpdate = comic.hasNewUpdate;
+    final lastCheckTime = comic.lastCheckTime;
+    if (lastUpdateTime != null || hasNewUpdate != null || lastCheckTime != null) {
+      prepareTableForFollowUpdates(folder, false);
+      final updates = <String>[];
+      final args = <Object?>[];
+      if (lastUpdateTime != null) {
+        updates.add('last_update_time = ?');
+        args.add(lastUpdateTime);
       }
+      if (hasNewUpdate != null) {
+        updates.add('has_new_update = ?');
+        args.add(hasNewUpdate ? 1 : 0);
+      }
+      if (lastCheckTime != null) {
+        updates.add('last_check_time = ?');
+        args.add(lastCheckTime);
+      }
+      _db.execute(
+        """
+        update "$folder"
+        set ${updates.join(', ')}
+        where id == ? and type == ?;
+      """,
+        [...args, comic.id, comic.type.value],
+      );
     }
   }
 

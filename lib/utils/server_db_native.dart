@@ -10,6 +10,13 @@ class ServerHistoryPage {
   final int total;
 }
 
+class ServerImageFavoritePage {
+  const ServerImageFavoritePage({required this.items, required this.total});
+
+  final List<ImageFavoritesComic> items;
+  final int total;
+}
+
 class ServerDbClient {
   const ServerDbClient();
 
@@ -31,6 +38,17 @@ class ServerDbClient {
 
   Future<bool> clearUnfavoritedHistory() {
     return Future.value(false);
+  }
+
+  Future<bool> replaceImageFavorites(List<ImageFavoritesComic> comics) {
+    return Future.value(false);
+  }
+
+  Future<ServerImageFavoritePage?> listImageFavorites({
+    int limit = 500,
+    int offset = 0,
+  }) {
+    return Future.value(null);
   }
 
   Future<List<ServerFavoriteFolder>?> listFavoriteFolders() {

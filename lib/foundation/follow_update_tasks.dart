@@ -226,7 +226,7 @@ class FollowUpdateTaskManager with ChangeNotifier {
       folder,
     )) {
       if (!ignoreCheckTime) {
-        var lastCheckTime = comic.lastCheckTime;
+        var lastCheckTime = comic.lastCheckDateTime;
         if (lastCheckTime != null &&
             DateTime.now().difference(lastCheckTime).inDays < 1) {
           continue;

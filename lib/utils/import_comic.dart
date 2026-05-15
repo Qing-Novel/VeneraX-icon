@@ -1,1 +1,3 @@
-export 'import_comic_native.dart' if (dart.library.html) 'import_comic_web.dart';
+export 'import_comic_native.dart'
+    if (dart.library.html) 'import_comic_web.dart'
+    if (dart.library.js_interop) 'import_comic_web.dart';

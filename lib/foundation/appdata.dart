@@ -75,6 +75,15 @@ class Appdata with Init {
     return {'settings': settings._data, 'searchHistory': searchHistory};
   }
 
+  static const syncImplicitDataKeys = ['follow_update_task_history'];
+
+  Map<String, dynamic> implicitDataForSync() {
+    return {
+      for (final key in syncImplicitDataKeys)
+        if (implicitData.containsKey(key)) key: implicitData[key],
+    };
+  }
+
   List<String> splitField(String merged) {
     return merged
         .split(',')
@@ -109,6 +118,19 @@ class Appdata with Init {
       }
     }
     searchHistory = List.from(data['searchHistory'] ?? []);
+    var implicitDataChanged = false;
+    final syncedImplicitData = data['implicitData'];
+    if (syncedImplicitData is Map) {
+      for (final key in syncImplicitDataKeys) {
+        if (syncedImplicitData.containsKey(key)) {
+          implicitData[key] = syncedImplicitData[key];
+          implicitDataChanged = true;
+        }
+      }
+    }
+    if (implicitDataChanged) {
+      writeImplicitData();
+    }
     saveData();
   }
 

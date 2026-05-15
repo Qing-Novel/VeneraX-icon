@@ -98,15 +98,21 @@ class _App {
   }
 
   Future<void> initComponents() async {
+    if (kIsWeb) {
+      await data.init();
+      await history.init();
+      await favorites.init();
+      await domain.init(dataPath);
+      await local.init();
+      return;
+    }
     final futures = <Future<void>>[
       data.init(),
       history.init(),
       favorites.init(),
       domain.init(dataPath),
+      local.init(),
     ];
-    if (!kIsWeb) {
-      futures.add(local.init());
-    }
     await Future.wait(futures);
   }
 
