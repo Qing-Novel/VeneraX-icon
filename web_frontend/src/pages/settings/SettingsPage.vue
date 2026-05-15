@@ -49,7 +49,10 @@ onUnmounted(() => { window.removeEventListener('resize', checkMobile) })
 function settingModel<K extends keyof typeof settingsStore.settings>(key: K) {
   return computed({
     get: () => settingsStore.settings[key],
-    set: (v) => settingsStore.update(key, v)
+    set: (v) => {
+      settingsStore.update(key, v)
+      syncStore.queueAutoUpload()
+    }
   })
 }
 
@@ -112,6 +115,8 @@ const showWebDavDialog = ref(false)
 const webdavUrl = ref('')
 const webdavUser = ref('')
 const webdavPass = ref('')
+const webdavAutoSync = ref(false)
+const webdavDisableSyncFields = ref('')
 const webdavTesting = ref(false)
 const webdavSaving = ref(false)
 
@@ -119,6 +124,8 @@ function openWebDavDialog() {
   webdavUrl.value = syncStore.config.url
   webdavUser.value = syncStore.config.user
   webdavPass.value = ''
+  webdavAutoSync.value = syncStore.config.autoSync
+  webdavDisableSyncFields.value = syncStore.config.disableSyncFields
   showWebDavDialog.value = true
 }
 
@@ -132,7 +139,7 @@ async function testWebDavConnection() {
     await apiPost('/sync/webdav/test', {
       url: webdavUrl.value,
       user: webdavUser.value,
-      pass: webdavPass.value,
+      pass: webdavPass.value || syncStore.config.pass,
     })
     showToast({ message: '连接成功', type: 'success' })
   } catch (e: any) {
@@ -149,7 +156,13 @@ async function saveWebDavConfig() {
   }
   webdavSaving.value = true
   try {
-    await syncStore.saveConfig(webdavUrl.value, webdavUser.value, webdavPass.value, true)
+    await syncStore.saveConfig(
+      webdavUrl.value,
+      webdavUser.value,
+      webdavPass.value,
+      webdavAutoSync.value,
+      webdavDisableSyncFields.value,
+    )
     showToast({ message: '保存成功', type: 'success' })
     showWebDavDialog.value = false
   } catch (e: any) {
@@ -189,6 +202,7 @@ async function handleImportFile(event: Event) {
     const text = await file.text()
     const data = JSON.parse(text)
     await apiPost('/api/server-db/import', { data })
+    syncStore.queueAutoUpload()
     showToast({ message: '导入成功', type: 'success' })
   } catch (e: any) {
     showToast({ message: '导入失败: ' + (e.message || '未知错误'), type: 'fail' })
@@ -313,7 +327,12 @@ async function handleImportFile(event: Event) {
         <h3 class="webdav-title">WebDAV 同步设置</h3>
         <van-field v-model="webdavUrl" label="URL" placeholder="https://dav.example.com/path" class="webdav-field" />
         <van-field v-model="webdavUser" label="用户名" placeholder="用户名" class="webdav-field" />
-        <van-field v-model="webdavPass" type="password" label="密码" placeholder="密码" class="webdav-field" />
+        <van-field v-model="webdavPass" type="password" label="密码" placeholder="留空则保留原密码" class="webdav-field" />
+        <div class="webdav-row">
+          <span>自动同步</span>
+          <van-switch v-model="webdavAutoSync" size="20" />
+        </div>
+        <van-field v-model="webdavDisableSyncFields" label="不同步字段" placeholder="用英文逗号分隔，如 token" class="webdav-field" />
         <div class="webdav-actions">
           <van-button size="small" plain :loading="webdavTesting" @click="testWebDavConnection">测试连接</van-button>
           <van-button size="small" type="primary" :loading="webdavSaving" @click="saveWebDavConfig">保存</van-button>
@@ -355,6 +374,7 @@ async function handleImportFile(event: Event) {
 .webdav-dialog { display: flex; flex-direction: column; gap: 12px; }
 .webdav-title { font-size: 16px; font-weight: 600; margin: 0 0 8px; }
 .webdav-field { padding: 0; }
+.webdav-row { display: flex; align-items: center; justify-content: space-between; min-height: 32px; font-size: 14px; }
 .webdav-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 8px; }
 @media (max-width: 720px) {
   .settings-page { display: block; height: 100%; }

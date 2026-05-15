@@ -1,28 +1,128 @@
 import { apiPost } from './api'
 import type { SyncStatus } from '../types'
 
-export function getWebDavConfig() {
-  return apiPost<{ ok: boolean; url?: string; user?: string; pass?: string; autoSync?: boolean }>('/sync/webdav/config/get')
+export interface WebDavConfig {
+  ok: boolean
+  configured?: boolean
+  url?: string
+  user?: string
+  pass?: string
+  autoSync?: boolean
+  disableSyncFields?: string
 }
 
-export function saveWebDavConfig(url: string, user: string, pass: string, autoSync: boolean) {
-  return apiPost('/sync/webdav/config/save', { url, user, pass, autoSync })
+export type WebDavSyncStatus = SyncStatus & {
+  configured: boolean
+  autoSyncEnabled: boolean
+}
+
+export function getWebDavConfig() {
+  return apiPost<WebDavConfig>('/sync/webdav/config/get')
+}
+
+export function saveWebDavConfig(
+  url: string,
+  user: string,
+  pass: string,
+  autoSync: boolean,
+  disableSyncFields = '',
+) {
+  return apiPost<WebDavConfig>('/sync/webdav/config/save', { url, user, pass, autoSync, disableSyncFields })
 }
 
 export function triggerDownload() {
-  return apiPost('/sync/webdav/download', {})
+  return apiPost('/api/server-db/sync/webdav', {})
 }
 
-export async function triggerUpload(): Promise<never> {
-  throw new Error('Web 端无法直接构造 Venera 备份体，请通过设置页导出备份后上传')
+function dataVersionFrom(appdata: Record<string, any>): number {
+  const settings = appdata.settings
+  const value = settings && typeof settings === 'object' ? settings.dataVersion : appdata.dataVersion
+  const version = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(version) ? Math.trunc(version) : 0
 }
 
-export async function getSyncStatus(): Promise<SyncStatus> {
-  const res = await apiPost<any>('/api/server-db/status')
+function cloneRecord(value: unknown): Record<string, any> {
+  if (!value || typeof value !== 'object') return {}
+  return JSON.parse(JSON.stringify(value))
+}
+
+function splitDisableSyncFields(value: string | undefined): string[] {
+  return String(value || '')
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean)
+}
+
+function appdataForUpload(appdata: Record<string, any>, dataVersion: number, disableSyncFields?: string) {
+  const next = cloneRecord(appdata)
+  const settings = next.settings && typeof next.settings === 'object' ? next.settings : next
+  settings.dataVersion = dataVersion
+  for (const field of splitDisableSyncFields(disableSyncFields)) {
+    delete settings[field]
+  }
+  return next
+}
+
+function appdataForLocalSave(appdata: Record<string, any>, dataVersion: number) {
+  const next = cloneRecord(appdata)
+  const settings = next.settings && typeof next.settings === 'object' ? next.settings : next
+  settings.dataVersion = dataVersion
+  return next
+}
+
+export async function triggerUpload() {
+  const [config, dump] = await Promise.all([
+    getWebDavConfig(),
+    apiPost<any>('/api/server-db/dump'),
+  ])
+  const configured = config.configured === true || !!(config.url && config.user)
+  if (!configured) {
+    throw new Error('WebDAV 尚未配置')
+  }
+
+  const previousAppdata = cloneRecord(dump?.appdata)
+  const previousVersion = dataVersionFrom(previousAppdata)
+  const nextVersion = previousVersion + 1
+  const daysSinceEpoch = Math.floor(Date.now() / 86400000)
+  const fileName = `${daysSinceEpoch}-${nextVersion}.venera`
+  const localAppdata = appdataForLocalSave(previousAppdata, nextVersion)
+  const uploadAppdata = appdataForUpload(previousAppdata, nextVersion, config.disableSyncFields)
+  const payload: Record<string, unknown> = {
+    fileName,
+    appdata: uploadAppdata,
+    metadata: { dataVersion: nextVersion },
+  }
+  if (Array.isArray(dump?.comicSources)) {
+    payload.comicSources = dump.comicSources
+  }
+
+  try {
+    const result = await apiPost('/api/server-db/upload/webdav', payload)
+    await apiPost('/api/server-db/appdata/save', { data: localAppdata })
+    return result
+  } catch (error) {
+    await apiPost('/api/server-db/appdata/save', { data: previousAppdata }).catch(() => {})
+    throw error
+  }
+}
+
+export async function getSyncStatus(): Promise<WebDavSyncStatus> {
+  const [statusResult, configResult] = await Promise.allSettled([
+    apiPost<any>('/api/server-db/status'),
+    getWebDavConfig(),
+  ])
+  const status = statusResult.status === 'fulfilled' ? statusResult.value : null
+  const config = configResult.status === 'fulfilled' ? configResult.value : null
+  const configured = !!(config && (config.configured === true || (config.url && config.user)))
+  const lastError = status?.metadata?.lastError
+    || (statusResult.status === 'rejected' ? statusResult.reason?.message : undefined)
+    || (configResult.status === 'rejected' ? configResult.reason?.message : undefined)
   return {
     isDownloading: false,
     isUploading: false,
-    lastError: res?.metadata?.lastError,
-    isEnabled: res?.initialized ?? false,
+    lastError,
+    isEnabled: configured,
+    configured,
+    autoSyncEnabled: configured && config?.autoSync === true,
   }
 }

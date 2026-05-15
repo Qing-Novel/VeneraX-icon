@@ -3,18 +3,20 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { imageProxyUrl } from '@/services/api'
 import { listHistory, getComicSources, listFavorites } from '@/services/server-db'
-import { triggerUpload, triggerDownload, getSyncStatus } from '@/services/sync'
-import type { History, ComicSource, FavoriteItem, SyncStatus } from '@/types'
+import { getSyncStatus, type WebDavSyncStatus } from '@/services/sync'
+import { useSyncStore } from '@/stores/sync'
+import type { History, ComicSource, FavoriteItem } from '@/types'
 import { resolveSourceKey } from '@/utils/source'
 
 const router = useRouter()
+const syncStore = useSyncStore()
 const histories = ref<History[]>([])
 const historyTotal = ref(0)
 const favorites = ref<FavoriteItem[]>([])
 const localComics = ref<FavoriteItem[]>([])
 const sources = ref<ComicSource[]>([])
-const syncStatus = ref<SyncStatus>({
-  isDownloading: false, isUploading: false, isEnabled: false
+const syncStatus = ref<WebDavSyncStatus>({
+  isDownloading: false, isUploading: false, isEnabled: false, configured: false, autoSyncEnabled: false
 })
 const syncBusy = ref(false)
 const downloadTaskCount = ref(0)
@@ -23,7 +25,7 @@ const updateCount = computed(
   () => favorites.value.filter(f => f.hasNewUpdate).length
 )
 
-onMounted(async () => {
+async function refreshHomeData() {
   const [h, s, f, ss] = await Promise.allSettled([
     listHistory(20),
     getComicSources(),
@@ -40,14 +42,29 @@ onMounted(async () => {
     localComics.value = f.value.filter(item => resolveSourceKey(item, sources.value) === 'local')
   }
   if (ss.status === 'fulfilled') syncStatus.value = ss.value
+  syncStatus.value.isDownloading = syncStore.isDownloading
+  syncStatus.value.isUploading = syncStore.isUploading
+  syncStatus.value.lastError = syncStore.lastError || syncStatus.value.lastError
+}
+
+async function refreshSyncStatus() {
+  syncStatus.value = await getSyncStatus()
+  syncStatus.value.isDownloading = syncStore.isDownloading
+  syncStatus.value.isUploading = syncStore.isUploading
+  syncStatus.value.lastError = syncStore.lastError || syncStatus.value.lastError
+}
+
+onMounted(async () => {
+  await syncStore.bootstrapAutoDownload()
+  await refreshHomeData()
 })
 
 async function doUpload() {
   if (syncBusy.value) return
   syncBusy.value = true
   try {
-    await triggerUpload()
-    syncStatus.value = await getSyncStatus()
+    await syncStore.upload()
+    await refreshSyncStatus()
   } catch (e: any) {
     syncStatus.value.lastError = e.message
   } finally { syncBusy.value = false }
@@ -57,8 +74,9 @@ async function doDownload() {
   if (syncBusy.value) return
   syncBusy.value = true
   try {
-    await triggerDownload()
-    syncStatus.value = await getSyncStatus()
+    await syncStore.download()
+    await refreshHomeData()
+    await refreshSyncStatus()
   } catch (e: any) {
     syncStatus.value.lastError = e.message
   } finally { syncBusy.value = false }
@@ -90,12 +108,13 @@ function goSources() { router.push('/explore') }
     </div>
 
     <!-- WebDAV Sync Widget -->
-    <div class="sync-bar" v-if="syncStatus.isEnabled">
+    <div class="sync-bar" v-if="syncStatus.configured">
       <div class="sync-status">
         <van-icon name="exchange" class="sync-icon" />
         <span v-if="syncStatus.lastError" class="sync-text sync-error">{{ syncStatus.lastError }}</span>
         <span v-else-if="syncBusy" class="sync-text">同步中...</span>
-        <span v-else class="sync-text">WebDAV 同步</span>
+        <span v-else-if="syncStatus.autoSyncEnabled" class="sync-text">WebDAV 自动同步</span>
+        <span v-else class="sync-text">WebDAV 手动同步</span>
       </div>
       <div class="sync-actions">
         <button class="sync-btn" :disabled="syncBusy" @click="doUpload" title="上传">
