@@ -1645,6 +1645,102 @@ test("server-db upload writes helper cookie jar into cookie.db backup entry", as
   }
 });
 
+test("server-db source runtime supports native detail and reader shapes", async () => {
+  const serverDataDir = await mkdtemp(join(tmpdir(), "venera-server-db-"));
+  const sourceDir = join(serverDataDir, "profiles", "reader", "comic_source");
+  await mkdir(sourceDir, { recursive: true });
+  await writeFile(
+    join(sourceDir, "demo.js"),
+    `
+class DemoSource extends ComicSource {
+  key = "demo";
+  name = "Demo";
+  comic = {
+    loadInfo: (id) => ({
+      id,
+      title: this.loadData("title"),
+      cover: "https://example.test/cover.jpg",
+      description: this.loadSetting("description"),
+      chapters: {
+        "卷一": { "1": "第1话" },
+        "2": "第2话"
+      },
+      comments: [{ userName: "tester", content: "ok" }]
+    }),
+    loadEp: (id, ep) => ({
+      title: "第" + ep + "话",
+      comicTitle: id,
+      images: [
+        "https://example.test/" + id + "/" + ep + "/1.jpg",
+        "https://example.test/" + id + "/" + ep + "/2.jpg"
+      ]
+    })
+  };
+}
+`,
+  );
+  await writeFile(
+    join(sourceDir, "demo.data"),
+    JSON.stringify({ title: "测试漫画", settings: { description: "测试描述" } }),
+  );
+
+  const helper = createServer({ serverDataDir });
+  const helperUrl = await listen(helper);
+  const post = (path, body) =>
+    fetch(`${helperUrl}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profile: "reader", ...body }),
+    });
+
+  try {
+    const detailResponse = await post("/api/server-db/comic/detail", {
+      sourceKey: "demo",
+      comicId: "comic-1",
+    });
+    assert.equal(detailResponse.status, 200);
+    const detailPayload = await detailResponse.json();
+    assert.equal(detailPayload.comic.title, "测试漫画");
+    assert.equal(detailPayload.comic.description, "测试描述");
+    assert.equal(detailPayload.comic.sourceKey, "demo");
+    assert.deepEqual(
+      detailPayload.chapters.find((item) => item.id === "2"),
+      { id: "2", title: "第2话" },
+    );
+    assert.deepEqual(
+      detailPayload.chapters.find((item) => item.title === "卷一"),
+      { title: "卷一", chapters: [{ id: "1", title: "第1话" }] },
+    );
+    assert.deepEqual(detailPayload.comments, [
+      { userName: "tester", content: "ok" },
+    ]);
+
+    const pagesResponse = await post("/api/server-db/reader/pages", {
+      sourceKey: "demo",
+      comicId: "comic-1",
+      chapterId: "1",
+    });
+    assert.equal(pagesResponse.status, 200);
+    const pagesPayload = await pagesResponse.json();
+    assert.deepEqual(pagesPayload.data, [
+      "https://example.test/comic-1/1/1.jpg",
+      "https://example.test/comic-1/1/2.jpg",
+    ]);
+    assert.equal(pagesPayload.title, "第1话");
+    assert.equal(pagesPayload.comicTitle, "comic-1");
+
+    const badSourceResponse = await post("/api/server-db/reader/pages", {
+      sourceKey: "../demo",
+      comicId: "comic-1",
+      chapterId: "1",
+    });
+    assert.equal(badSourceResponse.status, 400);
+  } finally {
+    await close(helper);
+    await rm(serverDataDir, { recursive: true, force: true });
+  }
+});
+
 test("server-db upload builds WebDAV backup from helper-side databases", async () => {
   const serverDataDir = await mkdtemp(join(tmpdir(), "venera-server-db-"));
   let uploaded = null;

@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createGzip, deflateRawSync, inflateRawSync } from "node:zlib";
+import vm from "node:vm";
 import {
   createReadStream,
   existsSync,
@@ -3454,6 +3455,483 @@ async function downloadLatestWebDavBackup({
   };
 }
 
+// --- Comic Source Runtime ---
+
+function validateComicSourceKey(sourceKey) {
+  const key = String(sourceKey || "").trim();
+  if (!key || key.includes("/") || key.includes("\\") || key.includes("..")) {
+    throw createHttpError(400, "Invalid comic source key");
+  }
+  return key;
+}
+
+function comicSourceClassNames(sourceCode) {
+  return Array.from(
+    String(sourceCode || "").matchAll(
+      /\bclass\s+([A-Za-z_$][\w$]*)\s+extends\s+ComicSource\b/g,
+    ),
+    (match) => match[1],
+  );
+}
+
+function normalizeComicChapters(chapters) {
+  if (!chapters) return [];
+  if (Array.isArray(chapters)) {
+    return chapters
+      .map((item, index) => {
+        if (typeof item === "string") {
+          return { id: String(index), title: item };
+        }
+        if (!item || typeof item !== "object") return null;
+        if (Array.isArray(item.chapters)) {
+          return { ...item, chapters: normalizeComicChapters(item.chapters) };
+        }
+        return item;
+      })
+      .filter(Boolean);
+  }
+  if (typeof chapters !== "object") return [];
+
+  return Object.entries(chapters).map(([key, value]) => {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const hasChapterShape = "id" in value || "title" in value;
+      if (hasChapterShape) return { id: String(key), ...value };
+      return { title: String(key), chapters: normalizeComicChapters(value) };
+    }
+    return { id: String(key), title: String(value ?? key) };
+  });
+}
+
+function normalizeComicPages(result) {
+  if (Array.isArray(result)) return result;
+  if (!result || typeof result !== "object") return [];
+  if (Array.isArray(result.images)) return result.images;
+  if (Array.isArray(result.pages)) return result.pages;
+  if (Array.isArray(result.data)) return result.data;
+  return [];
+}
+
+async function findFavoriteId(profileRoot, comicId, sourceKey) {
+  const favDbPath = join(profileRoot, "favorites.db");
+  if (!existsSync(favDbPath)) return null;
+  try {
+    const sqlite = await import("node:sqlite");
+    const db = new sqlite.DatabaseSync(favDbPath);
+    try {
+      const tables = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table';")
+        .all()
+        .map((r) => r.name)
+        .filter((n) => n !== "sqlite_sequence");
+      for (const table of tables) {
+        try {
+          const row = db
+            .prepare(
+              `SELECT id FROM "${table}" WHERE id = ? AND type = ? LIMIT 1;`,
+            )
+            .get(comicId, sourceKey);
+          if (row) return `${table}:${comicId}`;
+        } catch { /* table may not have expected columns */ }
+      }
+    } finally {
+      db.close();
+    }
+  } catch { /* sqlite not available or db error */ }
+  return null;
+}
+
+async function executeSourceMethod({
+  profileRoot,
+  sourceKey,
+  method,
+  args = [],
+  cookieJar,
+  persistCookieJar,
+  recordProxyRequest,
+}) {
+  const sourceDir = join(profileRoot, "comic_source");
+  sourceKey = validateComicSourceKey(sourceKey);
+  const sourceFile = join(sourceDir, `${sourceKey}.js`);
+  if (!existsSync(sourceFile)) {
+    throw createHttpError(404, `Comic source "${sourceKey}" not found`);
+  }
+  const sourceCode = readFileSync(sourceFile, "utf-8");
+  const sourceClassNames = comicSourceClassNames(sourceCode);
+
+  // Build a sandboxed Network object that uses proxyFetch
+  function createNetworkObj() {
+    return {
+      async get(url, options = {}) {
+        const headers = options.headers || {};
+        const response = await proxyFetch({
+          url,
+          method: "GET",
+          headers,
+          cookieJar,
+          persistCookieJar,
+          recordProxyRequest,
+        });
+        const body = await response.text();
+        return {
+          status: response.status,
+          headers: Object.fromEntries(response.headers.entries()),
+          body,
+        };
+      },
+      async post(url, bodyData, options = {}) {
+        const headers = options.headers || {};
+        let body = bodyData;
+        if (typeof bodyData === "object" && bodyData !== null) {
+          body = JSON.stringify(bodyData);
+          if (!headers["Content-Type"] && !headers["content-type"]) {
+            headers["Content-Type"] = "application/json";
+          }
+        }
+        const response = await proxyFetch({
+          url,
+          method: "POST",
+          headers,
+          body,
+          cookieJar,
+          persistCookieJar,
+          recordProxyRequest,
+        });
+        const respBody = await response.text();
+        return {
+          status: response.status,
+          headers: Object.fromEntries(response.headers.entries()),
+          body: respBody,
+        };
+      },
+      async request(url, options = {}) {
+        const reqMethod = options.method || "GET";
+        const headers = options.headers || {};
+        const response = await proxyFetch({
+          url,
+          method: reqMethod,
+          headers,
+          body: options.body,
+          cookieJar,
+          persistCookieJar,
+          recordProxyRequest,
+        });
+        const respBody = await response.text();
+        return {
+          status: response.status,
+          headers: Object.fromEntries(response.headers.entries()),
+          body: respBody,
+        };
+      },
+    };
+  }
+
+  // Minimal HtmlDom implementation using regex
+  function createHtmlDom(html) {
+    return {
+      querySelector(selector) {
+        return createDomElement(html, selector);
+      },
+      querySelectorAll(selector) {
+        return findAllElements(html, selector);
+      },
+      get text() {
+        return html.replace(/<[^>]*>/g, "").trim();
+      },
+      get innerHTML() {
+        return html;
+      },
+    };
+  }
+
+  function createDomElement(html, selector) {
+    // Very basic selector support for common patterns
+    const el = findElement(html, selector);
+    if (!el) return null;
+    return makeDomNode(el);
+  }
+
+  function makeDomNode(html) {
+    if (!html) return null;
+    return {
+      querySelector(sel) { return createDomElement(html, sel); },
+      querySelectorAll(sel) { return findAllElements(html, sel); },
+      get text() { return html.replace(/<[^>]*>/g, "").trim(); },
+      get innerHTML() {
+        const m = html.match(/^<[^>]*>([\s\S]*)<\/[^>]*>$/);
+        return m ? m[1] : html;
+      },
+      get outerHTML() { return html; },
+      getAttribute(name) {
+        const re = new RegExp(`${name}\\s*=\\s*["']([^"']*)["']`);
+        const m = html.match(re);
+        return m ? m[1] : null;
+      },
+      get attributes() {
+        const attrs = {};
+        const re = /(\w[\w-]*)=["']([^"']*?)["']/g;
+        let m;
+        while ((m = re.exec(html)) !== null) {
+          attrs[m[1]] = m[2];
+        }
+        return attrs;
+      },
+      get children() {
+        const inner = this.innerHTML;
+        return findAllElements(inner, "*");
+      },
+      get src() { return this.getAttribute("src"); },
+      get href() { return this.getAttribute("href"); },
+      get className() { return this.getAttribute("class") || ""; },
+      get id() { return this.getAttribute("id") || ""; },
+    };
+  }
+
+  function findElement(html, selector) {
+    const elements = findAllElements(html, selector);
+    return elements.length > 0 ? elements[0] : null;
+  }
+
+  function findAllElements(html, selector) {
+    if (!html || !selector) return [];
+    const results = [];
+    // Support tag, .class, #id, tag.class, tag[attr]
+    let tagName = "";
+    let className = "";
+    let idName = "";
+    let attrName = "";
+    let attrVal = "";
+
+    const classMatch = selector.match(/\.([a-zA-Z0-9_-]+)/);
+    const idMatch = selector.match(/#([a-zA-Z0-9_-]+)/);
+    const attrMatch = selector.match(/\[([a-zA-Z0-9_-]+)(?:="([^"]*)")?\]/);
+    const tagMatch = selector.match(/^([a-zA-Z0-9]+)/);
+
+    if (tagMatch) tagName = tagMatch[1];
+    if (classMatch) className = classMatch[1];
+    if (idMatch) idName = idMatch[1];
+    if (attrMatch) { attrName = attrMatch[1]; attrVal = attrMatch[2] || ""; }
+
+    const tagPattern = tagName || "[a-zA-Z][a-zA-Z0-9]*";
+    const re = new RegExp(
+      `<(${tagPattern})(\\s[^>]*)?>([\\s\\S]*?)<\\/\\1>|<(${tagPattern})(\\s[^>]*)?\\s*\\/?>`,
+      "gi",
+    );
+    let match;
+    while ((match = re.exec(html)) !== null) {
+      const fullMatch = match[0];
+      const attrs = match[2] || match[5] || "";
+      let passes = true;
+      if (className && !new RegExp(`class\\s*=\\s*["'][^"']*\\b${className}\\b`).test(attrs)) {
+        passes = false;
+      }
+      if (idName && !new RegExp(`id\\s*=\\s*["']${idName}["']`).test(attrs)) {
+        passes = false;
+      }
+      if (attrName) {
+        if (attrVal) {
+          if (!new RegExp(`${attrName}\\s*=\\s*["']${attrVal}["']`).test(attrs)) passes = false;
+        } else {
+          if (!new RegExp(`${attrName}\\s*=`).test(attrs)) passes = false;
+        }
+      }
+      if (passes) results.push(fullMatch);
+    }
+    return results.map(makeDomNode);
+  }
+
+  // Data file support (source .data files)
+  let sourceData = null;
+  const dataFile = join(sourceDir, `${sourceKey}.data`);
+  if (existsSync(dataFile)) {
+    try {
+      sourceData = JSON.parse(readFileSync(dataFile, "utf-8"));
+    } catch { sourceData = {}; }
+  }
+
+  // Build the sandbox context
+  const networkObj = createNetworkObj();
+  const sandbox = {
+    console: {
+      log: () => {},
+      warn: () => {},
+      error: () => {},
+      info: () => {},
+    },
+    setTimeout: (fn, ms) => setTimeout(fn, Math.min(ms || 0, 30000)),
+    clearTimeout,
+    JSON,
+    parseInt,
+    parseFloat,
+    isNaN,
+    isFinite,
+    encodeURIComponent,
+    decodeURIComponent,
+    encodeURI,
+    decodeURI,
+    atob: (s) => Buffer.from(s, "base64").toString("binary"),
+    btoa: (s) => Buffer.from(s, "binary").toString("base64"),
+    Array,
+    Object,
+    String,
+    Number,
+    Boolean,
+    RegExp,
+    Date,
+    Map,
+    Set,
+    Promise,
+    Error,
+    Math,
+    Symbol,
+    Uint8Array,
+    Buffer,
+    URL,
+    URLSearchParams: globalThis.URLSearchParams,
+    Network: networkObj,
+    HtmlDom: createHtmlDom,
+    APP: { locale: "zh_CN", version: "web" },
+    sendMessage(payload = {}) {
+      const methodName = payload?.method;
+      if (methodName === "load_data") return sourceData?.[payload.data_key] ?? null;
+      if (methodName === "load_setting") {
+        return sourceData?.settings?.[payload.setting_key] ?? null;
+      }
+      if (methodName === "save_data") {
+        if (sourceData && payload?.data_key) sourceData[payload.data_key] = payload.data;
+        return true;
+      }
+      if (methodName === "delete_data") {
+        if (sourceData && payload?.data_key) delete sourceData[payload.data_key];
+        return true;
+      }
+      if (methodName === "isLogged") return sourceData?.isLogged ?? true;
+      return null;
+    },
+    __sourceData: sourceData,
+    __sourceKey: sourceKey,
+    __result: null,
+    __error: null,
+  };
+
+  const context = vm.createContext(sandbox);
+
+  // Wrapper script that defines ComicSource base class and runs the source
+  const wrapperScript = `
+(async () => {
+  class ComicSource {
+    constructor() {
+      this.data = __sourceData || {};
+    }
+    loadData(dataKey) { return dataKey ? (this.data?.[dataKey] ?? null) : this.data; }
+    loadSetting(key) { return this.data?.settings?.[key] ?? null; }
+    saveData(dataKey, data) { if (dataKey) this.data[dataKey] = data; return true; }
+    deleteData(dataKey) { if (dataKey) delete this.data[dataKey]; return true; }
+    get isLogged() { return this.data?.isLogged ?? true; }
+    translate(key) { return this.translation?.[APP.locale]?.[key] ?? key; }
+    // Methods to be overridden by source scripts
+    async search(keyword, page, options) { return { comics: [], hasMore: false }; }
+    async explore(page) { return []; }
+    async getCategories() { return []; }
+    async getCategoryComics(categoryId, page) { return { comics: [], hasMore: false }; }
+    async getComicInfo(id) { return {}; }
+    async getPages(comicId, chapterId) { return []; }
+    async getComments(comicId, page) { return []; }
+    async getRelated(comicId) { return []; }
+    async getThumbnails(comicId) { return []; }
+    init() {}
+    static sources = {};
+  }
+
+  // Provide global references
+  globalThis.ComicSource = ComicSource;
+  globalThis.Network = Network;
+  globalThis.HtmlDom = HtmlDom;
+
+  // Execute the source script
+  ${sourceCode}
+
+  // Find or create the ComicSource subclass instance used by native sources.
+  const candidates = [];
+  const addCandidate = (val) => {
+    if (val && val instanceof ComicSource && val.constructor !== ComicSource) {
+      candidates.push(val);
+    }
+  };
+  for (const key of Object.keys(globalThis)) {
+    addCandidate(globalThis[key]);
+  }
+  const sourceVarNames = ['source', 'comicSource', 'src'];
+  for (const name of sourceVarNames) {
+    try {
+      addCandidate(eval(name));
+    } catch {}
+  }
+  for (const val of Object.values(ComicSource.sources || {})) {
+    addCandidate(val);
+  }
+  const sourceClassNames = ${JSON.stringify(sourceClassNames)};
+  for (const name of sourceClassNames) {
+    try {
+      const Constructor = eval(name);
+      if (typeof Constructor === 'function') addCandidate(new Constructor());
+    } catch {}
+  }
+  let sourceInstance = candidates.find((item) => String(item.key || '') === __sourceKey) || candidates[0] || null;
+  if (sourceInstance && typeof sourceInstance.init === 'function') {
+    await sourceInstance.init();
+  }
+  if (sourceInstance) {
+    ComicSource.sources[sourceInstance.key || __sourceKey] = sourceInstance;
+  }
+  async function callSourceMethod(methodName, methodArgs) {
+    const direct = sourceInstance?.[methodName];
+    if (
+      typeof direct === 'function' &&
+      direct !== ComicSource.prototype[methodName]
+    ) {
+      return direct.apply(sourceInstance, methodArgs);
+    }
+    if (methodName === 'getComicInfo' && typeof sourceInstance?.comic?.loadInfo === 'function') {
+      return sourceInstance.comic.loadInfo.call(sourceInstance.comic, methodArgs[0]);
+    }
+    if (methodName === 'getPages' && typeof sourceInstance?.comic?.loadEp === 'function') {
+      return sourceInstance.comic.loadEp.call(sourceInstance.comic, methodArgs[0], methodArgs[1]);
+    }
+    if (methodName === 'search' && typeof sourceInstance?.search?.loadPage === 'function') {
+      return sourceInstance.search.loadPage.call(
+        sourceInstance.search,
+        methodArgs[0],
+        methodArgs[1],
+        methodArgs[2],
+      );
+    }
+    throw new Error('Method ' + methodName + ' not found on source');
+  }
+  if (!sourceInstance) {
+    throw new Error("No ComicSource instance found in source script");
+  }
+
+  const method = "${method}";
+  const args = ${JSON.stringify(args)};
+  __result = await callSourceMethod(method, args);
+})().catch(e => { __error = e.message || String(e); });
+`;
+
+  const script = new vm.Script(wrapperScript, {
+    filename: `${sourceKey}.js`,
+    timeout: 30000,
+  });
+
+  // Run with async support
+  const promise = script.runInContext(context, { timeout: 30000 });
+  await promise;
+
+  if (sandbox.__error) {
+    throw createHttpError(500, `Source error: ${sandbox.__error}`);
+  }
+  return sandbox.__result;
+}
+
 async function handleServerDbRoute({
   req,
   res,
@@ -4617,6 +5095,261 @@ async function handleServerDbRoute({
       written,
       status: serverDbStatus(serverDataRoot, profileId),
     });
+    return true;
+  }
+
+  // --- Comic Source Runtime Endpoints ---
+
+  if (parsedUrl.pathname === "/api/server-db/appdata/save") {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { error: "Method not allowed" });
+      return true;
+    }
+    const data = payload.data;
+    if (!data || typeof data !== "object") {
+      throw createHttpError(400, "Invalid appdata payload");
+    }
+    const appdataPath = join(profileRoot, "appdata.json");
+    writeFileSync(appdataPath, JSON.stringify(data, null, 2));
+    sendJson(res, 200, { ok: true });
+    return true;
+  }
+
+  if (parsedUrl.pathname === "/api/server-db/search") {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { error: "Method not allowed" });
+      return true;
+    }
+    const { sourceKey, keyword, page = 1, options } = payload;
+    if (!sourceKey || !keyword) {
+      throw createHttpError(400, "sourceKey and keyword are required");
+    }
+    const result = await executeSourceMethod({
+      profileRoot,
+      sourceKey,
+      method: "search",
+      args: [keyword, page, options || null],
+      cookieJar,
+      persistCookieJar,
+      recordProxyRequest,
+    });
+    sendJson(res, 200, {
+      ok: true,
+      comics: result?.comics ?? [],
+      hasMore: result?.hasMore ?? false,
+    });
+    return true;
+  }
+
+  if (parsedUrl.pathname === "/api/server-db/categories") {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { error: "Method not allowed" });
+      return true;
+    }
+    const { sourceKey } = payload;
+    if (!sourceKey) {
+      throw createHttpError(400, "sourceKey is required");
+    }
+    const result = await executeSourceMethod({
+      profileRoot,
+      sourceKey,
+      method: "getCategories",
+      args: [],
+      cookieJar,
+      persistCookieJar,
+      recordProxyRequest,
+    });
+    sendJson(res, 200, {
+      ok: true,
+      categories: result ?? [],
+    });
+    return true;
+  }
+
+  if (parsedUrl.pathname === "/api/server-db/category/comics") {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { error: "Method not allowed" });
+      return true;
+    }
+    const { sourceKey, categoryId, page = 1 } = payload;
+    if (!sourceKey || !categoryId) {
+      throw createHttpError(400, "sourceKey and categoryId are required");
+    }
+    const result = await executeSourceMethod({
+      profileRoot,
+      sourceKey,
+      method: "getCategoryComics",
+      args: [categoryId, page],
+      cookieJar,
+      persistCookieJar,
+      recordProxyRequest,
+    });
+    sendJson(res, 200, {
+      ok: true,
+      comics: result?.comics ?? [],
+      hasMore: result?.hasMore ?? false,
+    });
+    return true;
+  }
+
+  if (parsedUrl.pathname === "/api/server-db/comic/detail") {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { error: "Method not allowed" });
+      return true;
+    }
+    const { sourceKey, comicId } = payload;
+    if (!sourceKey || !comicId) {
+      throw createHttpError(400, "sourceKey and comicId are required");
+    }
+    const result = await executeSourceMethod({
+      profileRoot,
+      sourceKey,
+      method: "getComicInfo",
+      args: [comicId],
+      cookieJar,
+      persistCookieJar,
+      recordProxyRequest,
+    });
+    const comic = result?.comic ?? result ?? {};
+    const chapters = normalizeComicChapters(result?.chapters ?? comic?.chapters);
+    const comments = result?.comments ?? [];
+    // Check if this comic is in favorites
+    let favoriteId = null;
+    try {
+      favoriteId = await findFavoriteId(profileRoot, comicId, sourceKey);
+    } catch { /* ignore */ }
+    if (comic && typeof comic === "object") {
+      comic.favoriteId = favoriteId;
+      comic.sourceKey = sourceKey;
+    }
+    sendJson(res, 200, { comic, chapters, comments });
+    return true;
+  }
+
+  if (parsedUrl.pathname === "/api/server-db/comic/thumbnails") {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { error: "Method not allowed" });
+      return true;
+    }
+    const { sourceKey, comicId } = payload;
+    if (!sourceKey || !comicId) {
+      throw createHttpError(400, "sourceKey and comicId are required");
+    }
+    let thumbnails = [];
+    try {
+      const result = await executeSourceMethod({
+        profileRoot,
+        sourceKey,
+        method: "getThumbnails",
+        args: [comicId],
+        cookieJar,
+        persistCookieJar,
+        recordProxyRequest,
+      });
+      thumbnails = result ?? [];
+    } catch { /* source may not support thumbnails */ }
+    sendJson(res, 200, { ok: true, thumbnails });
+    return true;
+  }
+
+  if (parsedUrl.pathname === "/api/server-db/comic/related") {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { error: "Method not allowed" });
+      return true;
+    }
+    const { sourceKey, comicId } = payload;
+    if (!sourceKey || !comicId) {
+      throw createHttpError(400, "sourceKey and comicId are required");
+    }
+    let comics = [];
+    try {
+      const result = await executeSourceMethod({
+        profileRoot,
+        sourceKey,
+        method: "getRelated",
+        args: [comicId],
+        cookieJar,
+        persistCookieJar,
+        recordProxyRequest,
+      });
+      comics = result ?? [];
+    } catch { /* source may not support related */ }
+    sendJson(res, 200, { ok: true, comics });
+    return true;
+  }
+
+  if (parsedUrl.pathname === "/api/server-db/comic/comments") {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { error: "Method not allowed" });
+      return true;
+    }
+    const { sourceKey, comicId, page = 1 } = payload;
+    if (!sourceKey || !comicId) {
+      throw createHttpError(400, "sourceKey and comicId are required");
+    }
+    let comments = [];
+    try {
+      const result = await executeSourceMethod({
+        profileRoot,
+        sourceKey,
+        method: "getComments",
+        args: [comicId, page],
+        cookieJar,
+        persistCookieJar,
+        recordProxyRequest,
+      });
+      comments = result ?? [];
+    } catch { /* source may not support comments */ }
+    sendJson(res, 200, { ok: true, comments });
+    return true;
+  }
+
+  if (parsedUrl.pathname === "/api/server-db/reader/pages") {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { error: "Method not allowed" });
+      return true;
+    }
+    const { sourceKey, comicId, chapterId } = payload;
+    if (!sourceKey || !comicId) {
+      throw createHttpError(400, "sourceKey and comicId are required");
+    }
+    const result = await executeSourceMethod({
+      profileRoot,
+      sourceKey,
+      method: "getPages",
+      args: [comicId, chapterId ?? null],
+      cookieJar,
+      persistCookieJar,
+      recordProxyRequest,
+    });
+    const data = normalizeComicPages(result);
+    const title = result?.title ?? "";
+    const comicTitle = result?.comicTitle ?? "";
+    sendJson(res, 200, { ok: true, data, title, comicTitle });
+    return true;
+  }
+
+  if (parsedUrl.pathname === "/api/server-db/explore/list") {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { error: "Method not allowed" });
+      return true;
+    }
+    const { sourceKey, page = 1 } = payload;
+    if (!sourceKey) {
+      throw createHttpError(400, "sourceKey is required");
+    }
+    const result = await executeSourceMethod({
+      profileRoot,
+      sourceKey,
+      method: "explore",
+      args: [page],
+      cookieJar,
+      persistCookieJar,
+      recordProxyRequest,
+    });
+    const comics = Array.isArray(result) ? result
+      : (result?.comics ?? result?.items ?? []);
+    sendJson(res, 200, { ok: true, comics });
     return true;
   }
 
