@@ -123,7 +123,7 @@ class ComicTile extends StatelessWidget {
       MenuEntry(
         icon: Icons.hub_outlined,
         text: 'Related Sources'.tl,
-        onClick: () => _showRelatedSourcesDialog(context),
+        onClick: () => showRelatedSourcesDialog(context, comic),
       ),
       MenuEntry(
         icon: Icons.move_up_outlined,

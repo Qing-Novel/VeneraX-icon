@@ -260,6 +260,7 @@ class _HistoryState extends State<_History> {
     history = HistoryManager().getRecent();
     count = HistoryManager().count();
     HistoryManager().addListener(onHistoryChange);
+    DataSync().addListener(onHistoryChange);
     super.initState();
     if (App.isWeb) {
       loadServerHistory();
@@ -269,6 +270,7 @@ class _HistoryState extends State<_History> {
   @override
   void dispose() {
     HistoryManager().removeListener(onHistoryChange);
+    DataSync().removeListener(onHistoryChange);
     super.dispose();
   }
 

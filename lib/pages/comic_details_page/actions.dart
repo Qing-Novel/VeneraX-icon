@@ -361,6 +361,26 @@ abstract mixin class _ComicPageActions {
           },
         ),
       MenuEntry(
+        icon: Icons.hub_outlined,
+        text: "Related Sources".tl,
+        onClick: () {
+          showRelatedSourcesDialog(
+            context,
+            Comic(
+              comic.title,
+              comic.cover,
+              comic.id,
+              comic.subTitle,
+              comic.plainTags,
+              comic.description ?? '',
+              comic.sourceKey,
+              comic.maxPage,
+              null,
+            ),
+          );
+        },
+      ),
+      MenuEntry(
         icon: Icons.move_up_outlined,
         text: "Migrate Source".tl,
         onClick: () {

@@ -7,6 +7,7 @@ import 'package:shimmer_animation/shimmer_animation.dart';
 import 'package:sliver_tools/sliver_tools.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 import 'package:venera/components/components.dart';
+import 'package:venera/components/related_sources_dialog.dart';
 import 'package:venera/components/rich_comment_content.dart';
 import 'package:venera/foundation/app.dart';
 import 'package:venera/foundation/appdata.dart';
@@ -255,17 +256,41 @@ class _ComicPageState extends LoadingState<ComicPage, ComicDetails>
       detailsLoadError = 'Comic source not found';
       return Res(_fallbackDetails(state));
     }
-    try {
-      final res = await comicSource.loadComicInfo!(widget.id);
-      if (res.success) {
-        return res;
+    // Return local data immediately, fetch network data in background
+    scheduleMicrotask(() => _fetchNetworkDetails(comicSource));
+    return Res(_fallbackDetails(state));
+  }
+
+  Future<void> _fetchNetworkDetails(ComicSource source) async {
+    int retryCount = 0;
+    while (retryCount < 3) {
+      try {
+        final res = await source.loadComicInfo!(widget.id);
+        if (!mounted) return;
+        if (res.success) {
+          detailsLoadError = null;
+          setState(() {
+            data = res.data;
+          });
+          await onDataLoaded();
+          return;
+        }
+        retryCount++;
+        if (retryCount < 3) await Future.delayed(const Duration(milliseconds: 200));
+      } catch (e) {
+        if (!mounted) return;
+        retryCount++;
+        if (retryCount >= 3) {
+          detailsLoadError = e.toString();
+          setState(() {});
+          return;
+        }
+        await Future.delayed(const Duration(milliseconds: 200));
       }
-      detailsLoadError = res.errorMessage ?? 'Load failed';
-      return Res(_fallbackDetails(state));
-    } catch (e) {
-      detailsLoadError = e.toString();
-      return Res(_fallbackDetails(state));
     }
+    if (!mounted) return;
+    detailsLoadError = 'Load failed';
+    setState(() {});
   }
 
   ComicDetails _fallbackDetails(ComicState state) {

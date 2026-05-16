@@ -400,7 +400,6 @@ async function toggleFavInFolder(folderId: string) {
       await deleteFavorite(folderId, comicId.value, type)
       favFolderStatus.value[folderId] = false
     } else {
-      const folderName = favFolders.value.find(f => f.id === folderId)?.name || folderId
       await addFavorite({
         folder: folderId,
         id: comicId.value,
