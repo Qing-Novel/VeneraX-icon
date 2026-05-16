@@ -63,7 +63,7 @@ CLAUDE.md
 
 # Web server user data
 web/server/.venera-helper-data/
-web/server/.browser-data/
+web/server/browser-data/
 web/server/node_modules/
 web/server/server-data/
 web/build/
