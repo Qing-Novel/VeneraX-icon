@@ -4198,18 +4198,21 @@ function saveComicBasicInfo(db, sourceKey, comic, profileRoot) {
   );
   // Mirror to domain DB for related-source auto-linking
   if (profileRoot) {
-    try {
-      const sourceMeta = comicSourceMetadataForKey(profileRoot, sourceKey);
-      const domainDb = new (await import("node:sqlite")).DatabaseSync(domainDbPath(profileRoot));
+    (async () => {
       try {
-        ensureDomainDbSchema(domainDb);
-        ensureSourcePlatform(domainDb, sourceKey, sourceMeta);
-        upsertComicToDomain(domainDb, comicId, comic);
-        autoLinkComic(domainDb, comicId);
-      } finally {
-        domainDb.close();
-      }
-    } catch { /* best-effort: domain DB mirroring is non-critical */ }
+        const sourceMeta = comicSourceMetadataForKey(profileRoot, sourceKey);
+        const { DatabaseSync } = await import("node:sqlite");
+        const domainDb = new DatabaseSync(domainDbPath(profileRoot));
+        try {
+          ensureDomainDbSchema(domainDb);
+          ensureSourcePlatform(domainDb, sourceKey, sourceMeta);
+          upsertComicToDomain(domainDb, comicId, comic);
+          autoLinkComic(domainDb, comicId);
+        } finally {
+          domainDb.close();
+        }
+      } catch { /* best-effort: domain DB mirroring is non-critical */ }
+    })();
   }
 }
 
