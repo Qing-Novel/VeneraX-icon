@@ -1,39 +1,14 @@
 <script setup lang="ts">
-import { ref, reactive, computed } from 'vue'
+import { ref, onMounted } from 'vue'
 import { showToast, showConfirmDialog } from 'vant'
-import { listFavorites, listHistory, getComicSources, upsertHistory } from '@/services/server-db'
+import { listHistory, getComicSources, upsertHistory } from '@/services/server-db'
 import { apiPost } from '@/services/api'
+import { useTasksStore, type Task, type TaskType, type TaskStatus } from '@/stores/tasks'
 
-// Task types
-type TaskType = 'follow_update' | 'history_refresh' | 'source_update'
-type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
-
-interface Task {
-  id: string
-  type: TaskType
-  title: string
-  status: TaskStatus
-  progress: number
-  total: number
-  currentItem: string
-  error?: string
-  startTime: number
-  endTime?: number
-}
+const store = useTasksStore()
 
 const activeTab = ref(0)
-const tasks = reactive<Task[]>([])
 const showActionSheet = ref(false)
-
-// Abort controllers for cancellation
-const abortControllers = new Map<string, AbortController>()
-
-const currentTasks = computed(() =>
-  tasks.filter(t => t.status === 'running' || t.status === 'pending')
-)
-const historyTasks = computed(() =>
-  tasks.filter(t => t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled')
-)
 
 function getTaskIcon(type: TaskType): string {
   switch (type) {
@@ -95,13 +70,12 @@ function createTask(type: TaskType): Task {
 }
 
 function startTask(type: TaskType) {
-  // Prevent duplicate running tasks of same type
-  if (currentTasks.value.some(t => t.type === type)) {
+  if (store.currentTasks.some(t => t.type === type)) {
     showToast('该任务正在运行中')
     return
   }
   const task = createTask(type)
-  tasks.unshift(task)
+  store.addTask(task)
   showActionSheet.value = false
 
   switch (type) {
@@ -113,160 +87,162 @@ function startTask(type: TaskType) {
 
 async function runFollowUpdateTask(task: Task) {
   const controller = new AbortController()
-  abortControllers.set(task.id, controller)
-  task.status = 'running'
+  store.setAbortController(task.id, controller)
+  store.updateTask(task.id, { status: 'running' })
 
   try {
-    const favorites = await listFavorites()
-    task.total = favorites.length
-    if (task.total === 0) {
-      task.status = 'completed'
-      task.endTime = Date.now()
+    const { useSettingsStore } = await import('@/stores/settings')
+    const settingsStore = useSettingsStore()
+    const folder = settingsStore.settings.followUpdatesFolder
+    if (!folder) {
+      store.updateTask(task.id, { error: '未设置追更文件夹', status: 'failed', endTime: Date.now() })
       return
     }
 
-    let updatedCount = 0
-    for (let i = 0; i < favorites.length; i++) {
-      if (controller.signal.aborted) {
-        task.status = 'cancelled'
-        task.endTime = Date.now()
-        return
-      }
-      const fav = favorites[i]
-      task.currentItem = fav.name
-      task.progress = i + 1
-
-      try {
-        const folder = (fav as any).folder
-        if (!folder) continue
-        await apiPost('/api/server-db/favorites/check-time', {
-          folder,
-          id: fav.id,
-          type: fav.type,
-          lastCheckTime: Date.now(),
-        })
-        updatedCount++
-      } catch (e) {
-        // Skip individual failures
-      }
+    const { startAsyncFollowUpdateCheck, getFollowUpdateCheckStatus, cancelFollowUpdateCheck } = await import('@/services/server-db')
+    const serverTaskId = await startAsyncFollowUpdateCheck(folder)
+    if (!serverTaskId) {
+      store.updateTask(task.id, { error: '启动检查失败', status: 'failed', endTime: Date.now() })
+      return
     }
-    task.currentItem = `完成，检查了 ${updatedCount} 项`
-    task.status = 'completed'
+    store.setActiveFollowTaskId(serverTaskId)
+    store.updateTask(task.id, { currentItem: `正在检查 ${folder}...`, serverTaskId })
+
+    let pollTimer: ReturnType<typeof setInterval> | null = null
+    const stopPolling = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null } }
+    let pollResolve: (() => void) | null = null
+    controller.signal.addEventListener('abort', async () => {
+      stopPolling()
+      store.updateTask(task.id, { status: 'cancelled', endTime: Date.now() })
+      cancelFollowUpdateCheck(serverTaskId).catch(() => {})
+      store.clearActiveFollowTaskId()
+      pollResolve?.()
+    })
+
+    await new Promise<void>((resolve) => {
+      pollResolve = resolve
+      pollTimer = setInterval(async () => {
+        try {
+          const state = await getFollowUpdateCheckStatus(serverTaskId)
+          if (!state) {
+            stopPolling()
+            store.updateTask(task.id, { error: '检查任务丢失', status: 'failed', endTime: Date.now() })
+            store.clearActiveFollowTaskId()
+            resolve()
+            return
+          }
+          store.updateTask(task.id, { progress: state.checked, total: state.total, currentItem: state.currentItem || task.currentItem })
+          if (state.status === 'completed') {
+            stopPolling()
+            store.updateTask(task.id, { progress: state.checked, total: state.checked, currentItem: state.currentItem || `完成，检查了 ${state.checked} 项`, status: 'completed', endTime: state.endTime ?? Date.now() })
+            store.clearActiveFollowTaskId()
+            resolve()
+          } else if (state.status === 'failed') {
+            stopPolling()
+            store.updateTask(task.id, { error: state.error || '检查失败', status: 'failed', endTime: state.endTime ?? Date.now() })
+            store.clearActiveFollowTaskId()
+            resolve()
+          } else if (state.status === 'cancelled') {
+            stopPolling()
+            store.updateTask(task.id, { status: 'cancelled', endTime: state.endTime ?? Date.now() })
+            store.clearActiveFollowTaskId()
+            resolve()
+          }
+        } catch { /* network errors — keep polling */ }
+      }, 2000)
+    })
   } catch (e: any) {
-    task.error = e.message || '未知错误'
-    task.status = 'failed'
+    store.updateTask(task.id, { error: e.message || '未知错误', status: 'failed' })
+    store.clearActiveFollowTaskId()
   } finally {
-    task.endTime = Date.now()
-    abortControllers.delete(task.id)
+    store.updateTask(task.id, { endTime: store.tasks.find(t => t.id === task.id)?.endTime || Date.now() })
+    store.deleteAbortController(task.id)
   }
 }
 
 async function runHistoryRefreshTask(task: Task) {
   const controller = new AbortController()
-  abortControllers.set(task.id, controller)
-  task.status = 'running'
+  store.setAbortController(task.id, controller)
+  store.updateTask(task.id, { status: 'running' })
 
   try {
     const historyResult = await listHistory()
     const historyItems = historyResult.items
-    task.total = historyItems.length
-    if (task.total === 0) {
-      task.status = 'completed'
-      task.endTime = Date.now()
+    store.updateTask(task.id, { total: historyItems.length })
+    if (historyItems.length === 0) {
+      store.updateTask(task.id, { status: 'completed', endTime: Date.now() })
       return
     }
 
     let refreshed = 0
     for (let i = 0; i < historyItems.length; i++) {
       if (controller.signal.aborted) {
-        task.status = 'cancelled'
-        task.endTime = Date.now()
+        store.updateTask(task.id, { status: 'cancelled', endTime: Date.now() })
         return
       }
       const item = historyItems[i]
-      task.currentItem = item.title
-      task.progress = i + 1
-
+      store.updateTask(task.id, { currentItem: item.title, progress: i + 1 })
       try {
         await upsertHistory({ ...item })
         refreshed++
-      } catch (e) {
-        // Skip individual failures
-      }
+      } catch { /* skip */ }
     }
-    task.currentItem = `完成，刷新了 ${refreshed} 项`
-    task.status = 'completed'
+    store.updateTask(task.id, { currentItem: `完成，刷新了 ${refreshed} 项`, status: 'completed' })
   } catch (e: any) {
-    task.error = e.message || '未知错误'
-    task.status = 'failed'
+    store.updateTask(task.id, { error: e.message || '未知错误', status: 'failed' })
   } finally {
-    task.endTime = Date.now()
-    abortControllers.delete(task.id)
+    store.updateTask(task.id, { endTime: store.tasks.find(t => t.id === task.id)?.endTime || Date.now() })
+    store.deleteAbortController(task.id)
   }
 }
 
 async function runSourceUpdateTask(task: Task) {
   const controller = new AbortController()
-  abortControllers.set(task.id, controller)
-  task.status = 'running'
+  store.setAbortController(task.id, controller)
+  store.updateTask(task.id, { status: 'running' })
 
   try {
     const sources = await getComicSources()
-    task.total = sources.length
-    if (task.total === 0) {
-      task.status = 'completed'
-      task.endTime = Date.now()
+    store.updateTask(task.id, { total: sources.length })
+    if (sources.length === 0) {
+      store.updateTask(task.id, { status: 'completed', endTime: Date.now() })
       return
     }
 
     let checked = 0
     for (let i = 0; i < sources.length; i++) {
       if (controller.signal.aborted) {
-        task.status = 'cancelled'
-        task.endTime = Date.now()
+        store.updateTask(task.id, { status: 'cancelled', endTime: Date.now() })
         return
       }
       const src = sources[i]
-      task.currentItem = src.name
-      task.progress = i + 1
-
+      store.updateTask(task.id, { currentItem: src.name, progress: i + 1 })
       try {
         await apiPost('/api/source/check-update', { sourceKey: src.key })
         checked++
-      } catch (e) {
-        // Skip individual failures
-      }
+      } catch { /* skip */ }
     }
-    task.currentItem = `完成，检查了 ${checked} 个源`
-    task.status = 'completed'
+    store.updateTask(task.id, { currentItem: `完成，检查了 ${checked} 个源`, status: 'completed' })
   } catch (e: any) {
-    task.error = e.message || '未知错误'
-    task.status = 'failed'
+    store.updateTask(task.id, { error: e.message || '未知错误', status: 'failed' })
   } finally {
-    task.endTime = Date.now()
-    abortControllers.delete(task.id)
+    store.updateTask(task.id, { endTime: store.tasks.find(t => t.id === task.id)?.endTime || Date.now() })
+    store.deleteAbortController(task.id)
   }
 }
 
 function cancelTask(task: Task) {
   showConfirmDialog({ title: '取消任务', message: `确定取消「${task.title}」？` })
     .then(() => {
-      const controller = abortControllers.get(task.id)
+      const controller = store.getAbortController(task.id)
       if (controller) controller.abort()
-      else {
-        task.status = 'cancelled'
-        task.endTime = Date.now()
-      }
+      else store.updateTask(task.id, { status: 'cancelled', endTime: Date.now() })
     })
     .catch(() => {})
 }
 
 function clearHistoryTasks() {
-  const toRemove = historyTasks.value.map(t => t.id)
-  toRemove.forEach(id => {
-    const idx = tasks.findIndex(t => t.id === id)
-    if (idx >= 0) tasks.splice(idx, 1)
-  })
+  store.clearHistory()
 }
 
 function progressPercent(task: Task): number {
@@ -279,6 +255,86 @@ const taskActions = [
   { name: '刷新历史', value: 'history_refresh' as TaskType, icon: 'replay' },
   { name: '更新漫画源', value: 'source_update' as TaskType, icon: 'upgrade' },
 ]
+
+// Reconnect to a server-side task that was started in a previous browser session
+async function reconnectToTask(serverTaskId: string) {
+  const { getFollowUpdateCheckStatus, cancelFollowUpdateCheck } = await import('@/services/server-db')
+  try {
+    const state = await getFollowUpdateCheckStatus(serverTaskId)
+    if (!state) {
+      store.clearActiveFollowTaskId()
+      return
+    }
+    const task: Task = {
+      id: `follow_update_reconnect_${serverTaskId}`,
+      type: 'follow_update',
+      title: '检查追更',
+      status: 'running',
+      progress: state.checked,
+      total: state.total,
+      currentItem: state.currentItem || '正在检查...',
+      startTime: state.startTime || Date.now(),
+      serverTaskId,
+    }
+    store.addTask(task)
+
+    if (state.status === 'completed' || state.status === 'failed' || state.status === 'cancelled') {
+      store.updateTask(task.id, { progress: state.checked, total: state.checked, status: state.status as TaskStatus, currentItem: state.currentItem || '', error: state.error ?? undefined, endTime: state.endTime ?? Date.now() })
+      store.clearActiveFollowTaskId()
+      return
+    }
+
+    const controller = new AbortController()
+    store.setAbortController(task.id, controller)
+    let pollTimer: ReturnType<typeof setInterval> | null = null
+    const stopPolling = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null } }
+
+    let pollResolve: (() => void) | null = null
+    controller.signal.addEventListener('abort', async () => {
+      stopPolling()
+      store.updateTask(task.id, { status: 'cancelled', endTime: Date.now() })
+      cancelFollowUpdateCheck(serverTaskId).catch(() => {})
+      store.clearActiveFollowTaskId()
+      pollResolve?.()
+    })
+
+    await new Promise<void>((resolve) => {
+      pollResolve = resolve
+      pollTimer = setInterval(async () => {
+        try {
+          const s = await getFollowUpdateCheckStatus(serverTaskId)
+          if (!s) return
+          store.updateTask(task.id, { progress: s.checked, total: s.total, currentItem: s.currentItem || task.currentItem })
+          if (s.status === 'completed') {
+            stopPolling()
+            store.updateTask(task.id, { progress: s.checked, total: s.checked, currentItem: s.currentItem || `完成，检查了 ${s.checked} 项`, status: 'completed', endTime: s.endTime ?? Date.now() })
+            store.clearActiveFollowTaskId()
+            resolve()
+          } else if (s.status === 'failed') {
+            stopPolling()
+            store.updateTask(task.id, { error: s.error || '检查失败', status: 'failed', endTime: s.endTime ?? Date.now() })
+            store.clearActiveFollowTaskId()
+            resolve()
+          } else if (s.status === 'cancelled') {
+            stopPolling()
+            store.updateTask(task.id, { status: 'cancelled', endTime: s.endTime ?? Date.now() })
+            store.clearActiveFollowTaskId()
+            resolve()
+          }
+        } catch { /* network errors — keep polling */ }
+      }, 2000)
+    })
+  } catch {
+    store.clearActiveFollowTaskId()
+  }
+}
+
+onMounted(() => {
+  const storedTaskId = store.getActiveFollowTaskId()
+  if (storedTaskId) {
+    reconnectToTask(storedTaskId)
+  }
+})
 </script>
 
 <template>
@@ -286,7 +342,7 @@ const taskActions = [
     <van-nav-bar title="任务">
       <template #right>
         <van-icon
-          v-if="historyTasks.length > 0 && activeTab === 1"
+          v-if="store.historyTasks.length > 0 && activeTab === 1"
           name="delete-o"
           size="20"
           @click="clearHistoryTasks"
@@ -297,11 +353,11 @@ const taskActions = [
     <van-tabs v-model:active="activeTab" sticky>
       <van-tab title="当前">
         <div class="task-list">
-          <div v-if="currentTasks.length === 0" class="empty-state">
+          <div v-if="store.currentTasks.length === 0" class="empty-state">
             <van-empty description="没有正在运行的任务" image="search" />
           </div>
           <div
-            v-for="task in currentTasks"
+            v-for="task in store.currentTasks"
             :key="task.id"
             class="task-card"
           >
@@ -344,11 +400,11 @@ const taskActions = [
 
       <van-tab title="历史">
         <div class="task-list">
-          <div v-if="historyTasks.length === 0" class="empty-state">
+          <div v-if="store.historyTasks.length === 0" class="empty-state">
             <van-empty description="没有历史任务" image="search" />
           </div>
           <div
-            v-for="task in historyTasks"
+            v-for="task in store.historyTasks"
             :key="task.id"
             class="task-card"
             :class="{ 'task-card--failed': task.status === 'failed' }"

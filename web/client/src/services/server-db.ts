@@ -187,3 +187,56 @@ export async function listImageFavorites(): Promise<any[]> {
   const res = await apiPost<any>('/api/server-db/image-favorites/list')
   return res?.items ?? res?.favorites ?? res ?? []
 }
+
+export async function markAsRead(folder: string, id: string, type: number): Promise<void> {
+  await apiPost('/api/server-db/favorites/mark-read', { folder, id, type })
+  queueAutoUpload()
+}
+
+export async function checkFollowUpdates(
+  folder: string,
+  ignoreCheckTime = false,
+): Promise<{ checked: number; updated: Array<{ id: string; type: number; title: string; updateTime: string }> }> {
+  const res = await apiPost<any>('/api/server-db/follow-updates/check', { folder, ignoreCheckTime })
+  return { checked: res?.checked ?? 0, updated: res?.updated ?? [] }
+}
+
+export interface FollowUpdateTaskState {
+  taskId: string
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+  total: number
+  checked: number
+  updated: Array<{ id: string; type: number; title: string; updateTime: string }>
+  currentItem: string
+  error: string | null
+  startTime: number
+  endTime: number | null
+  notFound?: boolean
+}
+
+export async function startAsyncFollowUpdateCheck(folder: string): Promise<string> {
+  const res = await apiPost<any>('/api/server-db/follow-updates/check-async', { folder })
+  return res?.taskId ?? ''
+}
+
+export async function getFollowUpdateCheckStatus(taskId: string): Promise<FollowUpdateTaskState | null> {
+  const res = await apiPost<any>('/api/server-db/follow-updates/check-status', { taskId })
+  if (res?.notFound) return null
+  return {
+    taskId: res?.taskId ?? taskId,
+    status: res?.status ?? 'pending',
+    total: res?.total ?? 0,
+    checked: res?.checked ?? 0,
+    updated: res?.updated ?? [],
+    currentItem: res?.currentItem ?? '',
+    error: res?.error ?? null,
+    startTime: res?.startTime ?? 0,
+    endTime: res?.endTime ?? null,
+    notFound: false,
+  }
+}
+
+export async function cancelFollowUpdateCheck(taskId: string): Promise<boolean> {
+  const res = await apiPost<any>('/api/server-db/follow-updates/check-cancel', { taskId })
+  return res?.ok === true && !res?.notFound
+}

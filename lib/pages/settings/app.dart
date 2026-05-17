@@ -8,6 +8,57 @@ class AppSettings extends StatefulWidget {
 }
 
 class _AppSettingsState extends State<AppSettings> {
+  void _showSyncLogsDialog(BuildContext context) {
+    final logs = DataSync().syncLogs;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text("Sync Logs".tl),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 400,
+          child: logs.isEmpty
+              ? Center(child: Text("No logs".tl))
+              : ListView.builder(
+                  itemCount: logs.length,
+                  itemBuilder: (_, i) {
+                    final log = logs[i];
+                    final time = DateTime.fromMillisecondsSinceEpoch(
+                      log['time'] as int? ?? 0,
+                    );
+                    final action = log['action'] as String? ?? '';
+                    final success = log['success'] as bool? ?? false;
+                    final error = log['error'] as String?;
+                    final fileName = log['fileName'] as String?;
+                    return ListTile(
+                      dense: true,
+                      leading: Icon(
+                        success ? Icons.check_circle : Icons.error,
+                        color: success ? Colors.green : Colors.red,
+                        size: 20,
+                      ),
+                      title: Text(
+                        action == 'upload' ? '上传' : action == 'download' ? '下载' : action,
+                        style: const TextStyle(fontSize: 14),
+                      ),
+                      subtitle: Text(
+                        '${time.toString().substring(0, 19)}${fileName != null ? '\n$fileName' : ''}${error != null ? '\n$error' : ''}',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text("Close".tl),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return SmoothCustomScrollView(
@@ -147,6 +198,13 @@ class _AppSettingsState extends State<AppSettings> {
             showPopUpWidget(context, const _WebdavSetting());
           },
           actionTitle: 'Set'.tl,
+        ).toSliver(),
+        _CallbackSetting(
+          title: "Sync Logs".tl,
+          callback: () async {
+            _showSyncLogsDialog(context);
+          },
+          actionTitle: 'View'.tl,
         ).toSliver(),
         _SettingPartTitle(title: "User".tl, icon: Icons.person_outline),
         SelectSetting(

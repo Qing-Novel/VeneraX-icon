@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { showToast } from 'vant'
 import ComicCard from '@/components/ComicCard.vue'
-import { getComicSources, listFavorites, listFolders, listHistory } from '@/services/server-db'
+import { getComicSources, listFavorites, listFolders, listHistory, startAsyncFollowUpdateCheck } from '@/services/server-db'
 import { useSettingsStore } from '@/stores/settings'
 import type { ComicSource, FavoriteFolder, FavoriteItem, History } from '@/types'
 import { resolveSourceKey } from '@/utils/source'
@@ -14,6 +15,7 @@ const sources = ref<ComicSource[]>([])
 const favorites = ref<FavoriteItem[]>([])
 const histories = ref<History[]>([])
 const loading = ref(false)
+const checking = ref(false)
 const activeTab = ref<'updates' | 'unread' | 'ended'>('updates')
 
 const selectedFolder = computed(() => settingsStore.settings.followUpdatesFolder)
@@ -29,6 +31,18 @@ const historyKeys = computed(() => {
 const sortedFavorites = computed(() => {
   return [...favorites.value].sort((a, b) => compareUpdateTime(a.lastUpdateTime, b.lastUpdateTime))
 })
+const historyMap = computed(() => {
+  const map = new Map<string, typeof histories.value[0]>()
+  for (const h of histories.value) map.set(h.id, h)
+  return map
+})
+
+function readProgressFor(item: { id: string }) {
+  const h = historyMap.value.get(item.id)
+  if (!h) return undefined
+  return { page: h.page, maxPage: h.maxPage ?? undefined }
+}
+
 const updateItems = computed(() => sortedFavorites.value.filter(item => item.hasNewUpdate))
 const unreadItems = computed(() => sortedFavorites.value.filter(item => !historyKeys.value.has(`${item.id}\u0000${item.type}`)))
 const endedItems = computed(() => sortedFavorites.value.filter(isEndedComic))
@@ -126,6 +140,24 @@ function isEndedComic(item: FavoriteItem): boolean {
     text.includes('已完结')
 }
 
+async function checkNow() {
+  const folder = selectedFolder.value
+  if (!folder) return
+  checking.value = true
+  try {
+    const taskId = await startAsyncFollowUpdateCheck(folder)
+    if (taskId) {
+      showToast('已创建追更检查任务')
+      router.push('/tasks')
+    } else {
+      showToast('启动检查失败')
+    }
+  } catch {
+    showToast('启动检查失败')
+  }
+  checking.value = false
+}
+
 function chooseFolder(folder: FavoriteFolder) {
   settingsStore.update('followUpdatesFolder', folder.name)
   loadFollowData()
@@ -171,6 +203,7 @@ function sourceNameFor(item: FavoriteItem) {
             <van-button size="small" icon="exchange">切换</van-button>
           </template>
         </van-popover>
+        <van-button size="small" icon="replay" :loading="checking" @click="checkNow">检查</van-button>
       </div>
 
       <van-tabs v-model:active="activeTab" sticky>
@@ -186,6 +219,8 @@ function sourceNameFor(item: FavoriteItem) {
             :comic="item"
             :source-key="resolveSourceKey(item, sources)"
             :source-name="sourceNameFor(item)"
+            :is-favorite="true"
+            :read-progress="readProgressFor(item)"
           />
         </div>
       </div>

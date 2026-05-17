@@ -32,6 +32,38 @@ class DataSync with ChangeNotifier {
     }
   }
 
+  static String _platformTag() {
+    if (Platform.isIOS) return 'ios';
+    if (Platform.isAndroid) return 'android';
+    if (Platform.isWindows) return 'win';
+    if (Platform.isMacOS) return 'macos';
+    if (Platform.isLinux) return 'linux';
+    return 'unknown';
+  }
+
+  static const _syncLogKey = 'sync_logs';
+  static const _maxSyncLogs = 100;
+
+  void _addSyncLog(String action, String? fileName, bool success, String? error) {
+    var logs = (appdata.implicitData[_syncLogKey] as List?) ?? [];
+    logs.insert(0, {
+      'time': DateTime.now().millisecondsSinceEpoch,
+      'action': action,
+      'fileName': fileName,
+      'success': success,
+      'error': error,
+    });
+    if (logs.length > _maxSyncLogs) logs = logs.sublist(0, _maxSyncLogs);
+    appdata.implicitData[_syncLogKey] = logs;
+    appdata.writeImplicitData();
+  }
+
+  List<Map<String, dynamic>> get syncLogs {
+    final raw = appdata.implicitData[_syncLogKey];
+    if (raw is List) return raw.cast<Map<String, dynamic>>();
+    return [];
+  }
+
   void onDataChanged() {
     if (isEnabled) {
       _pendingAutoUpload?.cancel();
@@ -182,7 +214,7 @@ class DataSync with ChangeNotifier {
         var filename = time;
         filename += '-';
         filename += nextVersion.toString();
-        filename += '.venera';
+        filename += '.${_platformTag()}.venera';
         var files = await client.readDir('/');
         files = files.where((e) => e.name!.endsWith('.venera')).toList();
         var old = files.firstWhereOrNull((e) => e.name!.startsWith("$time-"));
@@ -196,12 +228,14 @@ class DataSync with ChangeNotifier {
         await client.write(filename, await data.readAsBytes());
         data.deleteIgnoreError();
         Log.info("Upload Data", "Data uploaded successfully");
+        _addSyncLog('upload', filename, true, null);
         return const Res(true);
       } catch (e, s) {
         appdata.settings['dataVersion'] = previousVersion;
         await appdata.saveData(false);
         Log.error("Upload Data", e, s);
         _lastError = e.toString();
+        _addSyncLog('upload', null, false, e.toString());
         return Res.error(e.toString());
       } finally {
         data?.deleteIgnoreError();
@@ -270,10 +304,12 @@ class DataSync with ChangeNotifier {
           localFile.deleteIgnoreError();
         }
         Log.info("Data Sync", "Data downloaded successfully");
+        _addSyncLog('download', null, true, null);
         return const Res(true);
       } catch (e, s) {
         Log.error("Data Sync", e, s);
         _lastError = e.toString();
+        _addSyncLog('download', null, false, e.toString());
         return Res.error(e.toString());
       }
     } finally {

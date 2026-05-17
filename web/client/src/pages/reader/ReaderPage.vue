@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiPost, imageProxyUrl } from '@/services/api'
-import { upsertHistory, listHistory } from '@/services/server-db'
+import { upsertHistory, listHistory, markAsRead } from '@/services/server-db'
 import { useSettingsStore } from '@/stores/settings'
 import { sourceTypeFromKey } from '@/utils/source'
 import type { Chapter, ChapterGroup } from '@/types'
@@ -626,6 +626,11 @@ onMounted(async () => {
   applyReaderSettings()
   await fetchChapters()
   await fetchPages()
+  // Mark comic as read in follow-updates folder so it disappears from update list
+  const followFolder = settingsStore.settings.followUpdatesFolder
+  if (followFolder) {
+    markAsRead(followFolder, comicId.value, sourceTypeFromKey(sourceKey.value)).catch(() => {})
+  }
   // Load existing read episodes from history to accumulate
   try {
     const history = await listHistory(1000)

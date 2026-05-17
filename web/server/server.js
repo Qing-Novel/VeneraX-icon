@@ -1818,6 +1818,20 @@ function resolveWebDavConfig(payload, webDavConfigPath) {
   return normalizeWebDavConfig(payload);
 }
 
+// WebDAV sync log (in-memory, max 100 entries)
+const syncLogs = [];
+const MAX_SYNC_LOGS = 100;
+function addSyncLog(action, fileName, success, error) {
+  syncLogs.unshift({
+    time: Date.now(),
+    action,
+    fileName: fileName || null,
+    success: !!success,
+    error: error || null,
+  });
+  if (syncLogs.length > MAX_SYNC_LOGS) syncLogs.length = MAX_SYNC_LOGS;
+}
+
 function normalizeWebDavBackupName(rawName, { required = false } = {}) {
   const value = String(rawName || "").trim();
   if (!value) {
@@ -1830,6 +1844,15 @@ function normalizeWebDavBackupName(rawName, { required = false } = {}) {
     throw createHttpError(400, "Invalid remote backup file name");
   }
   return value;
+}
+
+const VALID_PLATFORMS = ["web", "win", "macos", "linux", "ios", "android"];
+
+function backupPlatform(fileName) {
+  const name = String(fileName || "");
+  const m = name.match(/\.([a-z]+)\.venera$/i);
+  if (m && VALID_PLATFORMS.includes(m[1].toLowerCase())) return m[1].toLowerCase();
+  return null;
 }
 
 function webDavAuthHeader(user, pass) {
@@ -1878,16 +1901,17 @@ function backupSortKey(fileName) {
   const name = String(fileName || "");
   const lowerName = name.toLowerCase();
   if (lowerName === "latest.venera") {
-    return { fallback: true, day: -1, version: -1, name };
+    return { fallback: true, day: -1, version: -1, platform: null, name };
   }
-  const stem = name.replace(/\.venera$/i, "");
+  const platform = backupPlatform(name);
+  const stem = name.replace(/\.[a-z]+\.venera$/i, "").replace(/\.venera$/i, "");
   const parts = stem.split("-");
   let day = Number.parseInt(parts[0], 10);
   if (!Number.isFinite(day)) day = 0;
   if (day > 1000000000) day = Math.floor(day / 86400000);
   let version = parts.length > 1 ? Number.parseInt(parts[1], 10) : -1;
   if (!Number.isFinite(version)) version = -1;
-  return { fallback: false, day, version, name };
+  return { fallback: false, day, version, platform, name };
 }
 
 function sortBackupFiles(files, newestFirst = true) {
@@ -1908,6 +1932,23 @@ function sortBackupFiles(files, newestFirst = true) {
   });
 }
 
+function backupFilesToCleanup(files, maxPerPlatform = 10) {
+  const groups = new Map();
+  for (const f of files) {
+    const platform = backupPlatform(f) || "__legacy__";
+    if (!groups.has(platform)) groups.set(platform, []);
+    groups.get(platform).push(f);
+  }
+  const toDelete = [];
+  for (const [, group] of groups) {
+    const sorted = sortBackupFiles(group, true);
+    if (sorted.length > maxPerPlatform) {
+      toDelete.push(...sorted.slice(maxPerPlatform));
+    }
+  }
+  return toDelete;
+}
+
 function backupSha256(buffer) {
   return createHash("sha256").update(buffer).digest("hex");
 }
@@ -1920,7 +1961,7 @@ const serverDbEntryNames = [
   "cookie.db",
 ];
 
-const serverDbBackupEntryNames = [...serverDbEntryNames, "appdata.json"];
+const serverDbBackupEntryNames = [...serverDbEntryNames, "appdata.json", "implicitData.json"];
 
 function assertLooksLikeVeneraBackup(buffer, fileName = "backup") {
   if (!Buffer.isBuffer(buffer) || buffer.length < 4) {
@@ -2548,8 +2589,12 @@ function writeServerDbBackup(profileRoot, entries) {
   }
   const appdata = entries.get("appdata.json");
   if (appdata) {
+    writeServerDbAppdata(profileRoot, appdata);
+  }
+  const implicitDataEntry = entries.get("implicitData.json");
+  if (implicitDataEntry) {
     mkdirSync(profileRoot, { recursive: true });
-    writeFileSync(join(profileRoot, "appdata.json"), appdata);
+    writeFileSync(join(profileRoot, "implicitData.json"), implicitDataEntry);
   }
   const comicSources = writeServerDbComicSources(profileRoot, entries, {
     replace: true,
@@ -2686,6 +2731,21 @@ function emptyServerDbAppdata() {
 
 function writeServerDbAppdata(profileRoot, data) {
   mkdirSync(profileRoot, { recursive: true });
+  let parsed = null;
+  if (Buffer.isBuffer(data)) {
+    try { parsed = JSON.parse(data.toString("utf8")); } catch { /* raw buffer */ }
+  } else {
+    parsed = data;
+  }
+  if (parsed && parsed.implicitData && typeof parsed.implicitData === "object") {
+    const implicitData = parsed.implicitData;
+    const withoutImplicit = { ...parsed };
+    delete withoutImplicit.implicitData;
+    writeFileSync(join(profileRoot, "implicitData.json"), JSON.stringify(implicitData, null, 2));
+    const appdataBytes = Buffer.from(JSON.stringify(withoutImplicit, null, 2));
+    writeFileSync(join(profileRoot, "appdata.json"), appdataBytes);
+    return appdataBytes;
+  }
   const appdataBytes = Buffer.isBuffer(data)
     ? data
     : Buffer.from(JSON.stringify(data || {}, null, 2));
@@ -3180,6 +3240,202 @@ function backfillComicBasicInfoFromHistory(db) {
   }
 }
 
+function extractComicUpdateTime(comic) {
+  if (!comic || typeof comic !== "object") return null;
+  if (comic.updateTime && typeof comic.updateTime === "string") {
+    const m = comic.updateTime.match(/(\d{4})-(\d{2})-(\d{2})/);
+    if (m) {
+      const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+      if (y >= 2000 && y <= 3000 && mo >= 1 && mo <= 12 && d >= 1 && d <= 31) {
+        return comic.updateTime;
+      }
+    }
+  }
+  const tags = comic.tags;
+  if (tags && typeof tags === "object") {
+    const namespaces = ["更新", "最後更新", "最后更新", "update", "last update"];
+    for (const ns of namespaces) {
+      const vals = Array.isArray(tags) ? null : tags[ns];
+      if (vals && Array.isArray(vals) && vals.length > 0) {
+        const v = String(vals[0]);
+        const m = v.match(/(\d{4})-(\d{2})-(\d{2})/);
+        if (m) {
+          const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+          if (y >= 2000 && y <= 3000 && mo >= 1 && mo <= 12 && d >= 1 && d <= 31) {
+            return v;
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+
+// Legacy numeric type → source key mapping (mirrors client-side LEGACY_SOURCE_KEYS)
+const LEGACY_SOURCE_KEYS = {
+  1: "ehentai", 2: "jm", 3: "hitomi", 4: "wnacg", 5: "nhentai", 6: "nhentai",
+  29663848: "hot_manga", 42816288: "manwaba", 150465061: "zaimanhua",
+  233488852: "baozi", 236897507: "hcomic", 258019538: "hitomi",
+  264196719: "nhentai", 331263271: "shonen_jump_plus", 385625716: "ehentai",
+  550146035: "goda", 553570794: "picacg", 557997769: "copy_manga",
+  577341847: "mh1234", 577718694: "manga_dex", 631413104: "manhuaren",
+  637999886: "Komiic", 716010982: "ikmmh", 740690276: "jcomic",
+  769844263: "jm", 771282371: "mxs", 778108598: "mh18",
+  798816513: "ykmh", 807338462: "ccc", 823512256: "wnacg",
+  964788560: "comick", 977805693: "happy", 981441865: "ManHuaGui",
+};
+
+function sourceKeyFromType(type) {
+  if (type == null || type === 0) return "";
+  return LEGACY_SOURCE_KEYS[type] || "";
+}
+
+async function checkFollowUpdatesFolder(
+  profileRoot,
+  folder,
+  ignoreCheckTime,
+  cookieJar,
+  persistCookieJar,
+  recordProxyRequest,
+  taskState,
+) {
+  if (taskState) {
+    taskState.status = "running";
+    taskState.startTime = Date.now();
+  }
+  const items = [];
+  await withWritableFavoriteDb(profileRoot, (db) => {
+    const rows = db
+      .prepare(`select * from ${sqliteIdentifier(folder)};`)
+      .all();
+    for (const row of rows) {
+      const item = favoriteItemFromRow(row);
+      if (item.type === 0) continue; // skip local comics
+      const sourceKey = item.sourceKey || sourceKeyFromType(item.type);
+      if (!sourceKey) continue;
+      item.sourceKey = sourceKey;
+      const lastCheck = item.lastCheckTime;
+      if (!ignoreCheckTime && lastCheck != null) {
+        const hoursSince = (Date.now() - lastCheck) / 3600000;
+        if (hoursSince < 24) continue;
+      }
+      items.push(item);
+    }
+  });
+
+  if (taskState) {
+    taskState.total = items.length;
+  }
+
+  let checked = 0;
+  const updated = [];
+  for (const item of items) {
+    if (taskState?.cancelled) break;
+    checked++;
+    if (taskState) {
+      taskState.checked = checked;
+      taskState.currentItem = item.name || item.title || item.id;
+    }
+    try {
+      const result = await executeSourceMethod({
+        profileRoot,
+        sourceKey: item.sourceKey,
+        method: "getComicInfo",
+        args: [item.id],
+        cookieJar,
+        persistCookieJar,
+        recordProxyRequest,
+      });
+      const comic = result?.comic ?? result ?? {};
+      const newUpdateTime = extractComicUpdateTime(comic);
+      const newTitle = comic.title ?? item.name;
+      const newCover = comic.cover ?? item.coverPath;
+      const newAuthor = comic.subtitle ?? comic.subTitle ?? item.author;
+      const newTags = Array.isArray(comic.tags)
+        ? comic.tags
+        : (comic.tags && typeof comic.tags === "object"
+          ? Object.entries(comic.tags).flatMap(([ns, vals]) =>
+              Array.isArray(vals) ? vals.map((v) => `${ns}:${v}`) : [`${ns}:${v}`])
+          : (item.tags ? String(item.tags).split(",").filter(Boolean) : []));
+
+      // Update comic_basic_info
+      try {
+        await withWritableHistoryDb(profileRoot, (db) => {
+          saveComicBasicInfo(db, item.sourceKey, {
+            id: item.id,
+            title: newTitle,
+            subtitle: newAuthor || null,
+            cover: newCover || null,
+            author: comic.author || null,
+            status: comic.status || null,
+            description: comic.description || null,
+            tags: newTags,
+            updateTime: newUpdateTime,
+            maxPage: comic.maxPage ?? comic.pageCount ?? null,
+          });
+        });
+      } catch { /* best-effort */ }
+
+      // Update favorite item info
+      await withWritableFavoriteDb(profileRoot, (db) => {
+        ensureFavoriteFolderTable(db, folder);
+        const quotedTable = sqliteIdentifier(folder);
+        db.prepare(
+          `update ${quotedTable}
+           set name = ?, author = ?, cover_path = ?, tags = ?,
+               last_check_time = ?
+           where id = ? and type = ?;`,
+        ).run(
+          newTitle,
+          newAuthor,
+          newCover || "",
+          newTags.join(","),
+          Date.now(),
+          item.id,
+          item.type,
+        );
+        // Compare and set has_new_update
+        const oldTime = item.lastUpdateTime || null;
+        if (newUpdateTime && newUpdateTime !== oldTime) {
+          db.prepare(
+            `update ${quotedTable}
+             set last_update_time = ?, has_new_update = 1
+             where id = ? and type = ?;`,
+          ).run(newUpdateTime, item.id, item.type);
+          updated.push({
+            id: item.id,
+            type: item.type,
+            title: newTitle,
+            updateTime: newUpdateTime,
+          });
+        } else if (newUpdateTime && newUpdateTime === oldTime) {
+          db.prepare(
+            `update ${quotedTable}
+             set has_new_update = 0
+             where id = ? and type = ?;`,
+          ).run(item.id, item.type);
+        }
+      });
+    } catch {
+      // Update last_check_time even on failure
+      try {
+        await withWritableFavoriteDb(profileRoot, (db) => {
+          db.prepare(
+            `update ${sqliteIdentifier(folder)}
+             set last_check_time = ?
+             where id = ? and type = ?;`,
+          ).run(Date.now(), item.id, item.type);
+        });
+      } catch { /* ignore */ }
+    }
+  }
+  if (taskState?.cancelled) {
+    taskState.status = "cancelled";
+    taskState.endTime = Date.now();
+  }
+  return { checked, updated };
+}
+
 function ensureImageFavoritesDbSchema(db) {
   db.exec(`
     create table if not exists image_favorites (
@@ -3384,6 +3640,7 @@ const favoriteFolderColumnDefinitions = [
   ["time", "text"],
   ["display_order", "int"],
   ["translated_tags", "text"],
+  ["source_key", "text"],
   ["last_update_time", "text"],
   ["has_new_update", "int"],
   ["last_check_time", "int"],
@@ -3552,6 +3809,8 @@ function favoriteWriteValue(item, column) {
       return item.displayOrder;
     case "translated_tags":
       return item.translatedTags;
+    case "source_key":
+      return item.sourceKey || null;
     case "last_update_time":
       return item.lastUpdateTime;
     case "has_new_update":
@@ -3586,6 +3845,7 @@ function favoriteItemFromRow(row) {
     displayOrder: Number(row.display_order || 0),
     translatedTags:
       row.translated_tags == null ? "" : String(row.translated_tags),
+    sourceKey: row.source_key == null ? "" : String(row.source_key),
     lastUpdateTime:
       row.last_update_time == null ? null : String(row.last_update_time),
     hasNewUpdate: Number(row.has_new_update || 0) === 1,
@@ -5003,6 +5263,16 @@ async function extractSourceCapabilities({ profileRoot, sourceKey }) {
   };
 }
 
+// Async follow-update check tasks (survive browser close)
+const followUpdateTasks = new Map();
+function cleanStaleTasks() {
+  const cutoff = Date.now() - 3600_000;
+  for (const [id, t] of followUpdateTasks) {
+    if (t.endTime && t.endTime < cutoff) followUpdateTasks.delete(id);
+  }
+}
+setInterval(cleanStaleTasks, 600_000);
+
 async function handleServerDbRoute({
   req,
   res,
@@ -5817,6 +6087,131 @@ async function handleServerDbRoute({
       }
     });
     markServerDbDirty(profileRoot, "favorites-batch-delete-all");
+    sendJson(res, 200, { ok: true, profile: profileId });
+    return true;
+  }
+
+  if (parsedUrl.pathname === "/api/server-db/follow-updates/check") {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { error: "Method not allowed" });
+      return true;
+    }
+    const checkFolder = normalizeFavoriteFolderName(
+      payload.folder || appdataGet(profileRoot, "followUpdatesFolder"),
+      "folder",
+    );
+    if (!checkFolder) {
+      throw createHttpError(400, "No follow-updates folder configured");
+    }
+    const ignoreCheckTime = Boolean(payload.ignoreCheckTime);
+    const results = await checkFollowUpdatesFolder(
+      profileRoot,
+      checkFolder,
+      ignoreCheckTime,
+      cookieJar,
+      persistCookieJar,
+      recordProxyRequest,
+    );
+    sendJson(res, 200, { ok: true, ...results, profile: profileId });
+    return true;
+  }
+
+  // Async follow-update check (survives browser close)
+  if (parsedUrl.pathname === "/api/server-db/follow-updates/check-async") {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { error: "Method not allowed" });
+      return true;
+    }
+    const checkFolder = normalizeFavoriteFolderName(
+      payload.folder || appdataGet(profileRoot, "followUpdatesFolder"),
+      "folder",
+    );
+    if (!checkFolder) {
+      throw createHttpError(400, "No follow-updates folder configured");
+    }
+    const taskId = randomUUID();
+    const taskState = {
+      taskId,
+      status: "pending",
+      folder: checkFolder,
+      total: 0,
+      checked: 0,
+      updated: [],
+      currentItem: "",
+      error: null,
+      startTime: 0,
+      endTime: null,
+    };
+    followUpdateTasks.set(taskId, taskState);
+    cleanStaleTasks();
+
+    // Start check in background — intentionally not awaited
+    checkFollowUpdatesFolder(
+      profileRoot,
+      checkFolder,
+      true, // ignoreCheckTime
+      cookieJar,
+      persistCookieJar,
+      recordProxyRequest,
+      taskState,
+    ).then((results) => {
+      taskState.status = "completed";
+      taskState.checked = results.checked;
+      taskState.updated = results.updated;
+      taskState.endTime = Date.now();
+      taskState.currentItem = results.updated.length > 0
+        ? `完成，发现 ${results.updated.length} 个更新`
+        : `完成，检查了 ${results.checked} 项，无更新`;
+      // Auto-backup to WebDAV if there are updates
+      if (results.updated.length > 0) {
+        markServerDbDirty(profileRoot, "follow-updates-check");
+        tryAutoBackupToWebDav(profileRoot);
+      }
+    }).catch((e) => {
+      taskState.status = "failed";
+      taskState.error = e.message || "Unknown error";
+      taskState.endTime = Date.now();
+    });
+
+    sendJson(res, 200, { ok: true, taskId, profile: profileId });
+    return true;
+  }
+
+  if (parsedUrl.pathname === "/api/server-db/follow-updates/check-status") {
+    const taskId = String(payload.taskId || "");
+    const taskState = followUpdateTasks.get(taskId);
+    if (!taskState) {
+      sendJson(res, 200, { ok: true, notFound: true, profile: profileId });
+      return true;
+    }
+    sendJson(res, 200, {
+      ok: true,
+      profile: profileId,
+      taskId: taskState.taskId,
+      status: taskState.status,
+      total: taskState.total,
+      checked: taskState.checked,
+      updated: taskState.updated,
+      currentItem: taskState.currentItem,
+      error: taskState.error,
+      startTime: taskState.startTime,
+      endTime: taskState.endTime,
+    });
+    return true;
+  }
+
+  if (parsedUrl.pathname === "/api/server-db/follow-updates/check-cancel") {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { error: "Method not allowed" });
+      return true;
+    }
+    const taskId = String(payload.taskId || "");
+    const taskState = followUpdateTasks.get(taskId);
+    if (!taskState || taskState.status !== "running") {
+      sendJson(res, 200, { ok: true, notFound: true, profile: profileId });
+      return true;
+    }
+    taskState.cancelled = true;
     sendJson(res, 200, { ok: true, profile: profileId });
     return true;
   }
@@ -6913,6 +7308,11 @@ async function handleSyncWebDavRoute({
     return true;
   }
 
+  if (parsedUrl.pathname === "/sync/webdav/logs") {
+    sendJson(res, 200, { ok: true, logs: syncLogs });
+    return true;
+  }
+
   const config = resolveWebDavConfig(payload, webDavConfigPath);
 
   if (parsedUrl.pathname === "/sync/webdav/test") {
@@ -7023,6 +7423,7 @@ async function handleSyncWebDavRoute({
     }
 
     assertLooksLikeVeneraBackup(buffer, selectedFile || "downloaded backup");
+    addSyncLog("download", selectedFile, true, null);
     sendJson(res, 200, {
       ok: true,
       skipped: false,
@@ -7094,6 +7495,7 @@ async function handleSyncWebDavRoute({
       persistCookieJar,
       recordProxyRequest,
     });
+    addSyncLog("upload", fileName, true, null);
     sendJson(res, 200, {
       ok: true,
       fileName,
@@ -7863,6 +8265,163 @@ export function createServer(options = {}) {
       socket.destroy();
     }
   });
+
+  // Periodic follow-updates check (every 10 minutes)
+  const followUpdatesTimer = setInterval(() => {
+    try {
+      const appdataPath = join(defaultProfileRoot, "appdata.json");
+      if (!existsSync(appdataPath)) return;
+      const appdata = JSON.parse(readFileSync(appdataPath, "utf8"));
+      const folder = appdata?.followUpdatesFolder;
+      if (!folder) return;
+      checkFollowUpdatesFolder(
+        defaultProfileRoot,
+        String(folder),
+        false,
+        cookieJar,
+        persistCookieJar,
+        recordProxyRequest,
+      ).catch(() => {});
+    } catch { /* timer errors should not crash the server */ }
+  }, 10 * 60 * 1000);
+  server.on("close", () => clearInterval(followUpdatesTimer));
+
+  // Build a minimal venera backup ZIP from server databases
+  function createBackupZip(profileRoot) {
+    const chunks = [];
+    const cdEntries = [];
+    const encoder = new TextEncoder();
+    let cdOffset = 0;
+
+    function addZipEntry(name, data) {
+      const nameBytes = encoder.encode(name);
+      const local = Buffer.alloc(30 + nameBytes.length);
+      local.writeUInt32LE(0x04034b50, 0); // local file header signature
+      local.writeUInt16LE(20, 4);          // version needed
+      local.writeUInt32LE(0, 14);          // crc32 (omitted)
+      local.writeUInt32LE(data.length, 18); // compressed size
+      local.writeUInt32LE(data.length, 22); // uncompressed size
+      local.writeUInt16LE(nameBytes.length, 26);
+      chunks.push(local);
+      chunks.push(Buffer.from(nameBytes));
+      chunks.push(data);
+
+      const cd = Buffer.alloc(46 + nameBytes.length);
+      cd.writeUInt32LE(0x02014b50, 0);    // central directory header
+      cd.writeUInt16LE(20, 4);
+      cd.writeUInt16LE(20, 6);
+      cd.writeUInt32LE(0, 16);             // crc32
+      cd.writeUInt32LE(data.length, 20);
+      cd.writeUInt32LE(data.length, 24);
+      cd.writeUInt16LE(nameBytes.length, 28);
+      cd.writeUInt32LE(cdOffset, 42);
+      cdEntries.push(cd);
+      cdEntries.push(Buffer.from(nameBytes));
+      cdOffset += 30 + nameBytes.length + data.length;
+    }
+
+    for (const entryName of serverDbBackupEntryNames) {
+      const filePath = serverDbEntryPath(profileRoot, entryName);
+      if (existsSync(filePath)) {
+        addZipEntry(entryName, readFileSync(filePath));
+      }
+    }
+
+    const sourcesDir = join(profileRoot, "sources");
+    if (existsSync(sourcesDir)) {
+      try {
+        for (const file of readdirSync(sourcesDir)) {
+          if (file.endsWith(".mjs") || file.endsWith(".js")) {
+            addZipEntry(`sources/${file}`, readFileSync(join(sourcesDir, file)));
+          }
+        }
+      } catch { /* skip */ }
+    }
+
+    const cdBuf = Buffer.concat(cdEntries);
+    const eocd = Buffer.alloc(22);
+    eocd.writeUInt32LE(0x06054b50, 0);
+    eocd.writeUInt16LE(cdEntries.length / 2, 8);
+    eocd.writeUInt16LE(cdEntries.length / 2, 10);
+    eocd.writeUInt32LE(cdBuf.length, 12);
+    eocd.writeUInt32LE(cdOffset, 16);
+
+    return Buffer.concat([...chunks, cdBuf, eocd]);
+  }
+
+  // Auto-upload backup to WebDAV (called after background check finds updates)
+  async function tryAutoBackupToWebDav(profileRoot) {
+    try {
+      const stored = readStoredWebDavConfig(webDavConfigPath);
+      if (!stored || !stored.url) return;
+      const config = normalizeWebDavConfig(stored);
+
+      let existingFiles = [];
+      try {
+        existingFiles = (await listWebDavBackupFiles({
+          config, cookieJar, persistCookieJar, recordProxyRequest,
+        })).filter(f => f !== "latest.venera");
+      } catch { /* proceed with upload even if list fails */ }
+
+      const daysSinceEpoch = Math.floor(Date.now() / 86400000);
+      let dataVersion = 0;
+      try {
+        const appdataPath = join(profileRoot, "appdata.json");
+        if (existsSync(appdataPath)) {
+          const ad = JSON.parse(readFileSync(appdataPath, "utf8"));
+          dataVersion = Number(ad?.settings?.dataVersion) || 0;
+        }
+      } catch { /* use 0 */ }
+      dataVersion += 1;
+      try {
+        const appdataPath = join(profileRoot, "appdata.json");
+        const ad = existsSync(appdataPath) ? JSON.parse(readFileSync(appdataPath, "utf8")) : { settings: {} };
+        if (!ad.settings) ad.settings = {};
+        ad.settings.dataVersion = dataVersion;
+        writeFileSync(appdataPath, JSON.stringify(ad, null, 2));
+      } catch { /* best-effort */ }
+      const zipBuf = createBackupZip(profileRoot);
+      const fileName = `${daysSinceEpoch}-${dataVersion}.web.venera`;
+
+      await webDavRequest({
+        config, path: fileName, method: "PUT",
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "Content-Length": String(zipBuf.length),
+        },
+        body: zipBuf,
+        cookieJar, persistCookieJar, recordProxyRequest,
+      });
+
+      // Also upload as latest.venera for convenience
+      await webDavRequest({
+        config, path: "latest.venera", method: "PUT",
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "Content-Length": String(zipBuf.length),
+        },
+        body: zipBuf,
+        cookieJar, persistCookieJar, recordProxyRequest,
+      });
+
+      // Keep only latest 10 backups per platform
+      const toRemove = backupFilesToCleanup(existingFiles, 10);
+      for (const name of toRemove) {
+        try {
+          await webDavRequest({
+            config, path: name, method: "DELETE",
+            cookieJar, persistCookieJar, recordProxyRequest,
+          });
+        } catch { /* best-effort */ }
+      }
+
+      console.log(`[auto-backup] Uploaded ${fileName} (${zipBuf.length} bytes)`);
+      addSyncLog("auto-upload", fileName, true, null);
+    } catch (e) {
+      console.error("[auto-backup] Failed:", e.message || e);
+      addSyncLog("auto-upload", null, false, e.message || String(e));
+    }
+  }
 
   return server;
 }

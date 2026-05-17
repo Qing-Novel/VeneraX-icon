@@ -16,7 +16,7 @@ const categories = [
   { key: 'appearance', label: '外观', icon: 'brush-o' },
   { key: 'local', label: '本地收藏', icon: 'star' },
   { key: 'app', label: '应用', icon: 'apps-o' },
-  { key: 'network', label: '网络', icon: 'globe-o' },
+  { key: 'network', label: '网络', icon: 'cluster-o' },
   { key: 'about', label: '关于', icon: 'info' },
   { key: 'debug', label: 'Debug', icon: 'warning' },
 ]
@@ -203,6 +203,34 @@ const webdavPass = ref('')
 const webdavAutoSync = ref(false)
 const webdavDisableSyncFields = ref('')
 const webdavTesting = ref(false)
+
+// Sync logs
+const showSyncLogsPopup = ref(false)
+const syncLogsData = ref<Array<{ time: number; action: string; fileName: string | null; success: boolean; error: string | null }>>([])
+const syncLogsLoading = ref(false)
+
+async function openSyncLogs() {
+  showSyncLogsPopup.value = true
+  syncLogsLoading.value = true
+  try {
+    const resp = await apiPost('/sync/webdav/logs', {})
+    syncLogsData.value = resp.logs || []
+  } catch { syncLogsData.value = [] }
+  finally { syncLogsLoading.value = false }
+}
+
+function formatSyncTime(ts: number) {
+  return new Date(ts).toLocaleString()
+}
+
+function syncActionLabel(action: string) {
+  switch (action) {
+    case 'upload': return '上传'
+    case 'download': return '下载'
+    case 'auto-upload': return '自动上传'
+    default: return action
+  }
+}
 const webdavSaving = ref(false)
 
 function openWebDavDialog() {
@@ -380,6 +408,7 @@ async function handleImportFile(event: Event) {
         <div class="setting-row"><span>导入应用数据</span><van-button size="small" plain @click="triggerImport">导入</van-button></div>
         <input ref="fileInput" type="file" accept=".json" style="display:none" @change="handleImportFile" />
         <div class="setting-row"><span>数据同步</span><van-button size="small" plain @click="openWebDavDialog">设置</van-button></div>
+        <div class="setting-row"><span>同步日志</span><van-button size="small" plain @click="openSyncLogs">查看</van-button></div>
         <div class="section-header"><van-icon name="contact" size="16" /><span>用户</span></div>
         <div class="setting-row"><span>语言</span><select v-model="language" class="s-select"><option value="system">系统</option><option value="zh-CN">简体中文</option><option value="zh-TW">繁體中文</option><option value="en">English</option><option value="ja">日本語</option></select></div>
       </div>
@@ -421,6 +450,25 @@ async function handleImportFile(event: Event) {
         <div class="webdav-actions">
           <van-button size="small" plain :loading="webdavTesting" @click="testWebDavConnection">测试连接</van-button>
           <van-button size="small" type="primary" :loading="webdavSaving" @click="saveWebDavConfig">保存</van-button>
+        </div>
+      </div>
+    </van-popup>
+
+    <!-- Sync Logs Popup -->
+    <van-popup v-model:show="showSyncLogsPopup" round position="center" :style="{ width: '420px', maxWidth: '90vw', maxHeight: '70vh', padding: '20px', background: '#fff', color: '#1a1a1a' }">
+      <div class="sync-logs-dialog">
+        <h3 style="margin: 0 0 12px; font-size: 16px;">同步日志</h3>
+        <van-loading v-if="syncLogsLoading" style="text-align: center; padding: 20px;" />
+        <div v-else-if="syncLogsData.length === 0" style="text-align: center; color: #999; padding: 20px;">暂无日志</div>
+        <div v-else class="sync-logs-list">
+          <div v-for="(log, i) in syncLogsData" :key="i" class="sync-log-item">
+            <div class="sync-log-header">
+              <span class="sync-log-action" :class="{ success: log.success, fail: !log.success }">{{ syncActionLabel(log.action) }}</span>
+              <span class="sync-log-time">{{ formatSyncTime(log.time) }}</span>
+            </div>
+            <div v-if="log.fileName" class="sync-log-file">{{ log.fileName }}</div>
+            <div v-if="log.error" class="sync-log-error">{{ log.error }}</div>
+          </div>
         </div>
       </div>
     </van-popup>
@@ -520,6 +568,16 @@ async function handleImportFile(event: Event) {
 .webdav-field { padding: 0; }
 .webdav-row { display: flex; align-items: center; justify-content: space-between; min-height: 32px; font-size: 14px; }
 .webdav-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 8px; }
+.sync-logs-dialog { display: flex; flex-direction: column; }
+.sync-logs-list { max-height: 50vh; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.sync-log-item { padding: 8px 10px; border-radius: 6px; background: #f7f8fa; font-size: 13px; }
+.sync-log-header { display: flex; justify-content: space-between; align-items: center; }
+.sync-log-action { font-weight: 600; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+.sync-log-action.success { background: #e8f5e9; color: #2e7d32; }
+.sync-log-action.fail { background: #fbe9e7; color: #c62828; }
+.sync-log-time { color: #999; font-size: 12px; }
+.sync-log-file { color: #555; margin-top: 4px; word-break: break-all; }
+.sync-log-error { color: #c62828; margin-top: 4px; font-size: 12px; }
 .dns-entry { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
 .dns-field { flex: 1; padding: 0; }
 .dns-arrow { color: #999; font-size: 14px; flex-shrink: 0; }

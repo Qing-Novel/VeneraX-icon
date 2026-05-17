@@ -153,6 +153,10 @@ Future<File> exportAppData([bool sync = true]) async {
     if (File(domainFile).existsSync()) {
       zipFile.addFile("data/venera.db", domainFile);
     }
+    var readLaterFile = FilePath.join(dataPath, "read_later.db");
+    if (File(readLaterFile).existsSync()) {
+      zipFile.addFile("read_later.db", readLaterFile);
+    }
     zipFile.addFile("appdata.json", appdata);
     zipFile.addFile("cookie.db", cookies);
     for (var file in Directory(
@@ -252,6 +256,11 @@ Future<void> importAppData(File file, [bool checkVersion = false]) async {
       SingleInstanceCookieJar.instance = SingleInstanceCookieJar(
         FilePath.join(App.dataPath, "cookie.db"),
       )..init();
+    }
+    var readLaterFile = cacheDir.joinFile("read_later.db");
+    if (await readLaterFile.exists()) {
+      File(FilePath.join(App.dataPath, "read_later.db")).deleteIfExistsSync();
+      readLaterFile.renameSync(FilePath.join(App.dataPath, "read_later.db"));
     }
     var comicSourceDir = FilePath.join(cacheDirPath, "comic_source");
     if (Directory(comicSourceDir).existsSync()) {

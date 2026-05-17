@@ -2,11 +2,11 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  listFolders, listFavorites, getComicSources,
+  listFolders, listFavorites, getComicSources, listHistory,
   createFolder, deleteFolder, renameFolder, reorderFolders,
   batchDeleteFavorites, batchMoveFavorites
 } from '@/services/server-db'
-import type { FavoriteItem, FavoriteFolder, ComicSource } from '@/types'
+import type { FavoriteItem, FavoriteFolder, ComicSource, History } from '@/types'
 import { showDialog, showConfirmDialog, showToast } from 'vant'
 import { resolveSourceKey } from '@/utils/source'
 import { useSettingsStore } from '@/stores/settings'
@@ -17,6 +17,7 @@ const settingsStore = useSettingsStore()
 const folders = ref<FavoriteFolder[]>([])
 const sources = ref<ComicSource[]>([])
 const favorites = ref<FavoriteItem[]>([])
+const histories = ref<History[]>([])
 const loading = ref(false)
 const selectedFolderId = ref<string | null>(null)
 const showDrawer = ref(false)
@@ -43,8 +44,32 @@ async function loadData() {
     const [f, s] = await Promise.all([listFolders(), getComicSources()])
     folders.value = f.sort((a, b) => a.order - b.order)
     sources.value = s
-    await loadFavorites()
+    await Promise.all([loadFavorites(), loadAllHistory()])
   } finally { loading.value = false }
+}
+
+async function loadAllHistory() {
+  const items: History[] = []
+  let offset = 0
+  while (true) {
+    const page = await listHistory(500, offset)
+    items.push(...page.items)
+    if (page.items.length < 500 || items.length >= page.total) break
+    offset += page.items.length
+  }
+  histories.value = items
+}
+
+const historyMap = computed(() => {
+  const map = new Map<string, History>()
+  for (const h of histories.value) map.set(h.id, h)
+  return map
+})
+
+function readProgressFor(item: FavoriteItem) {
+  const h = historyMap.value.get(item.id)
+  if (!h) return undefined
+  return { page: h.page, maxPage: h.maxPage ?? undefined }
 }
 
 async function loadFavorites() {
@@ -353,7 +378,7 @@ async function handleBatchMove(targetFolderId: string) {
           :class="{ active: selectedFolderId === `source:${source.key}` }"
           @click="selectFolder(`source:${source.key}`)"
         >
-          <van-icon name="globe-o" size="20" />
+          <van-icon name="apps-o" size="20" />
           <span class="folder-name">{{ source.name }}</span>
         </div>
       </div>
@@ -405,7 +430,7 @@ async function handleBatchMove(targetFolderId: string) {
             :class="{ active: selectedFolderId === `source:${source.key}` }"
             @click="selectFolder(`source:${source.key}`)"
           >
-            <van-icon name="globe-o" size="20" />
+            <van-icon name="apps-o" size="20" />
             <span class="folder-name">{{ source.name }}</span>
           </div>
         </div>
@@ -445,6 +470,7 @@ async function handleBatchMove(targetFolderId: string) {
               :source-key="resolveSourceKey(item, sources)"
               :source-name="sourceNameFor(item)"
               :is-favorite="true"
+              :read-progress="readProgressFor(item)"
             />
             <div v-if="multiSelectMode" class="checkbox-overlay">
               <van-checkbox

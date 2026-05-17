@@ -51,6 +51,29 @@ class DataSync with ChangeNotifier {
 
   String? _lastError;
 
+  static const _syncLogKey = 'sync_logs';
+  static const _maxSyncLogs = 100;
+
+  void _addSyncLog(String action, String? fileName, bool success, String? error) {
+    var logs = (appdata.implicitData[_syncLogKey] as List?) ?? [];
+    logs.insert(0, {
+      'time': DateTime.now().millisecondsSinceEpoch,
+      'action': action,
+      'fileName': fileName,
+      'success': success,
+      'error': error,
+    });
+    if (logs.length > _maxSyncLogs) logs = logs.sublist(0, _maxSyncLogs);
+    appdata.implicitData[_syncLogKey] = logs;
+    appdata.writeImplicitData();
+  }
+
+  List<Map<String, dynamic>> get syncLogs {
+    final raw = appdata.implicitData[_syncLogKey];
+    if (raw is List) return raw.cast<Map<String, dynamic>>();
+    return [];
+  }
+
   List<String>? _serverWebDavConfig;
 
   bool? _serverWebDavAutoSync;
@@ -521,12 +544,14 @@ class DataSync with ChangeNotifier {
               files;
         }
         Log.info("Upload Data", "Data uploaded successfully");
+        _addSyncLog('upload', fileName, true, null);
         return const Res(true);
       } catch (e, s) {
         appdata.settings['dataVersion'] = previousVersion;
         await appdata.saveData(false);
         Log.error("Upload Data", e, s);
         _lastError = _formatError(e);
+        _addSyncLog('upload', null, false, _lastError);
         return Res.error(_lastError!);
       }
     } finally {
@@ -600,10 +625,12 @@ class DataSync with ChangeNotifier {
           localFile.deleteIgnoreError();
         }
         Log.info("Data Sync", "Data downloaded successfully");
+        _addSyncLog('download', null, true, null);
         return const Res(true);
       } catch (e, s) {
         Log.error("Data Sync", e, s);
         _lastError = _formatError(e);
+        _addSyncLog('download', null, false, _lastError);
         return Res.error(_lastError!);
       }
     } finally {
