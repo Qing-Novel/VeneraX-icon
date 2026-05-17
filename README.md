@@ -10,7 +10,7 @@
 
 A cross-platform manga/comic reader with self-hosted Web frontend support.
 
-> **Disclaimer:** This repository is for personal learning and use only.
+> **Disclaimer:** This repository is for personal learning and use only. Feature development and maintenance are AI-driven.
 
 ## Warning
 
@@ -35,7 +35,7 @@ flutter build linux      # Linux
 flutter build macos      # macOS
 ```
 
-### Web Frontend
+### Web PWA
 
 Vue 3 PWA powered by a Node.js server + Rust image proxy sidecar.
 
