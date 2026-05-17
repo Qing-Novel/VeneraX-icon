@@ -37,72 +37,37 @@ flutter build macos      # macOS
 
 ### Web Frontend
 
-The Web frontend is a Vue 3 PWA served by a Node.js + Rust (Axum) server. The Node.js server hosts the PWA static files and handles API routes; the Rust sidecar (`venera-fetch`) handles image proxying and fetching.
+Vue 3 PWA powered by a Node.js server + Rust image proxy sidecar.
 
-#### Docker (Recommended)
+**Docker (Recommended)**
 
 ```bash
-# Build and start the full stack (Vue frontend + server + sidecar)
 cd web
-docker build -t venera-web .
-docker run -d -p 60098:60098 \
-  -v "$(pwd)/data.venera:/app/data" \
-  --name venera-web \
-  venera-web
+docker compose up -d --build
+# http://localhost:60098
 ```
 
-Default access: `http://localhost:60098`
+**Manual**
 
-#### Manual Deployment
-
-**Prerequisites:** Node.js 20+, Rust 1.95+
+Requires Node.js 20+ and Rust.
 
 ```bash
-# 1. Build the Vue PWA frontend
-cd web/client
-npm ci
-npm run build
-# Output: web/client/dist/
-
-# 2. Build the Rust fetch sidecar
-cd ../../server/rust-fetch
-cargo build --release
-# Output: target/release/venera-fetch
-
-# 3. Install server dependencies
-cd ../../web/server
-npm install --omit=dev
-
-# 4. Run (VENERA_STATIC_DIR must point to the built frontend)
-VENERA_STATIC_DIR=../client/dist \
-VENERA_WEB_BIND=127.0.0.1:3000 \
-VENERA_WEB_DATA_DIR=./data.venera/webpwa \
-  node server.js
+cd web/client && npm ci && npm run build   # build frontend
+cd ../server && npm install --omit=dev      # install deps
+VENERA_STATIC_DIR=../client/dist node server.js
+# http://localhost:8080
 ```
 
-Default access: `http://localhost:3000`
-
-#### Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `VENERA_WEB_BIND` | `127.0.0.1:3000` | Server listen address |
-| `VENERA_WEB_DATA_DIR` | `./data.venera/webpwa` | Data & database directory |
-| `VENERA_WEB_STATIC_DIR` | `../client/dist` | PWA static files path |
-| `VENERA_FETCH_SIDECAR` | `http://127.0.0.1:9876` | Sidecar endpoint for image fetch |
-| `VENERA_COOKIE_JAR_PATH` | (optional) | Cookie persistence file path |
-
-#### Development
+**Development**
 
 ```bash
-# Terminal 1: Start the Rust server
+# Terminal 1: server (port 3000)
 cd web/server
-VENERA_WEB_BIND=127.0.0.1:3000 VENERA_WEB_DATA_DIR=./data.venera/webpwa VENERA_WEB_STATIC_DIR=../client/dist node server.js
+VENERA_STATIC_DIR=../client/dist node server.js
 
-# Terminal 2: Start Vite dev server (hot-reload, proxies /api to :3000)
+# Terminal 2: Vite hot-reload (port 5173)
 cd web/client
 npm ci && npm run dev
-# Access: http://localhost:5173
 ```
 
 ## Build from Source

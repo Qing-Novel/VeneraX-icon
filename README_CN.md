@@ -1,6 +1,7 @@
 # Venera
 
 [![Flutter](https://img.shields.io/badge/flutter-3.41.4-blue)](https://flutter.dev/)
+[![AI-Driven](https://img.shields.io/badge/AI--Driven-Claude%20Opus%204.7-6e47ff)](https://claude.ai)
 [![License](https://img.shields.io/github/license/kyosee/venera)](https://github.com/kyosee/venera/blob/master/LICENSE)
 [![Stars](https://img.shields.io/github/stars/kyosee/venera?style=flat)](https://github.com/kyosee/venera/stargazers)
 [![Release](https://img.shields.io/github/v/release/kyosee/venera)](https://github.com/kyosee/venera/releases)
@@ -34,15 +35,40 @@ flutter build linux      # Linux
 flutter build macos      # macOS
 ```
 
-### Web 前端（Docker）
+### Web PWA端
+
+Vue 3 PWA，由 Node.js 服务端 + Rust 图片代理侧车驱动。
+
+**Docker（推荐）**
 
 ```bash
-pwsh ./tool/build_web_helper_bundle.ps1
-cd build/web-helper-bundle
+cd web
 docker compose up -d --build
+# 访问 http://localhost:60098
 ```
 
-默认访问地址：`http://localhost:60098`
+**手动部署**
+
+需要 Node.js 20+ 和 Rust。
+
+```bash
+cd web/client && npm ci && npm run build   # 构建前端
+cd ../server && npm install --omit=dev      # 安装依赖
+VENERA_STATIC_DIR=../client/dist node server.js
+# 访问 http://localhost:8080
+```
+
+**开发模式**
+
+```bash
+# 终端1: 启动服务端（端口 3000）
+cd web/server
+VENERA_STATIC_DIR=../client/dist node server.js
+
+# 终端2: 启动 Vite 热更新（端口 5173）
+cd web/client
+npm ci && npm run dev
+```
 
 ## 从源码构建
 

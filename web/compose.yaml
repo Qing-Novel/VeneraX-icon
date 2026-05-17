@@ -11,6 +11,7 @@ services:
       VENERA_COOKIE_JAR_PATH: /app/browser-data/helper-cookies.json
       VENERA_SERVER_DATA_DIR: /app/server-data
       VENERA_BROWSER_HEADLESS: "true"
+      VENERA_FETCH_SIDECAR: http://127.0.0.1:9876
     volumes:
       - browser-data:/app/browser-data
       - server-data:/app/server-data
