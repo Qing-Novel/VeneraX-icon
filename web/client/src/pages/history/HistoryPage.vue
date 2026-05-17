@@ -151,10 +151,23 @@ function isThisWeek(ts: number): boolean {
   return date >= startOfWeek
 }
 
-const todayItems = computed(() => filteredItems.value.filter(i => isToday(i.time)))
-const yesterdayItems = computed(() => filteredItems.value.filter(i => isYesterday(i.time)))
-const thisWeekItems = computed(() => filteredItems.value.filter(i => !isToday(i.time) && !isYesterday(i.time) && isThisWeek(i.time)))
-const earlierItems = computed(() => filteredItems.value.filter(i => !isThisWeek(i.time)))
+const groupedItems = computed(() => {
+  const today: History[] = []
+  const yesterday: History[] = []
+  const thisWeek: History[] = []
+  const earlier: History[] = []
+  for (const item of filteredItems.value) {
+    if (isToday(item.time)) { today.push(item) }
+    else if (isYesterday(item.time)) { yesterday.push(item) }
+    else if (isThisWeek(item.time)) { thisWeek.push(item) }
+    else { earlier.push(item) }
+  }
+  return { today, yesterday, thisWeek, earlier }
+})
+const todayItems = computed(() => groupedItems.value.today)
+const yesterdayItems = computed(() => groupedItems.value.yesterday)
+const thisWeekItems = computed(() => groupedItems.value.thisWeek)
+const earlierItems = computed(() => groupedItems.value.earlier)
 
 function goComic(item: History) {
   if (multiSelectMode.value) { toggleSelect(item); return }

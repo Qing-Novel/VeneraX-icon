@@ -162,10 +162,18 @@ export async function getAppdata(): Promise<Record<string, any>> {
   return res?.data ?? res ?? {}
 }
 
-export async function getComicSources(): Promise<ComicSource[]> {
+let comicSourcesCache: { data: ComicSource[]; ts: number } | null = null
+const COMIC_SOURCES_TTL = 30000
+
+export async function getComicSources(force = false): Promise<ComicSource[]> {
+  if (!force && comicSourcesCache && Date.now() - comicSourcesCache.ts < COMIC_SOURCES_TTL) {
+    return comicSourcesCache.data
+  }
   const res = await apiPost<any>('/api/server-db/comic-sources')
   const items = res?.items ?? res ?? []
-  return normalizeComicSources(items)
+  const data = normalizeComicSources(items)
+  comicSourcesCache = { data, ts: Date.now() }
+  return data
 }
 
 export async function searchComics(sourceKey: string, keyword: string, page = 1, options?: string[]): Promise<{ comics: any[], hasMore: boolean }> {

@@ -598,9 +598,18 @@ function preloadImages() {
 const loadingNextChapter = ref(false)
 const loadingPrevChapter = ref(false)
 
+let scrollTicking = false
 function onScroll() {
   if (!continuousEl.value || !isContinuous.value) return
-  const el = continuousEl.value
+  if (scrollTicking) return
+  scrollTicking = true
+  requestAnimationFrame(() => {
+    scrollTicking = false
+    doScrollUpdate()
+  })
+}
+function doScrollUpdate() {
+  const el = continuousEl.value!
   const imgs = el.querySelectorAll('.img-placeholder')
   const mid = isContinuousHorizontal.value
     ? el.scrollLeft + el.clientWidth / 2
