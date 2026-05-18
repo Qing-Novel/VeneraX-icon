@@ -157,6 +157,15 @@ function handleViewMore(section: ExploreSection, sourceKey: string) {
   }
 }
 
+function translateTitle(text: string, translation: Record<string, Record<string, string>> | null | undefined): string {
+  if (!translation) return text
+  const lang = navigator.language // e.g. "zh-CN", "en-US"
+  const langKey = lang.replace('-', '_') // "zh_CN"
+  const shortKey = lang.split('-')[0] // "zh"
+  const map = translation[langKey] ?? translation[shortKey]
+  return map?.[text] ?? text
+}
+
 function onScroll(e: Event) {
   const target = e.target as HTMLElement
   const currentScrollTop = target.scrollTop
@@ -179,7 +188,7 @@ onMounted(async () => {
             sourceKey: source.key,
             sourceName: source.name,
             exploreIndex: i,
-            title: ep.title || source.name,
+            title: translateTitle(ep.title || source.name, caps.translation),
           })
         }
       } else {
@@ -187,7 +196,7 @@ onMounted(async () => {
           sourceKey: source.key,
           sourceName: source.name,
           exploreIndex: 0,
-          title: source.name,
+          title: translateTitle(source.name, caps?.translation),
         })
       }
     } catch {

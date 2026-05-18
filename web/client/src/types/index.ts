@@ -138,6 +138,7 @@ export interface SourceCapabilities {
   account: { hasLogin: boolean } | null
   favorites: { multiFolder: boolean } | null
   settings: Record<string, any> | null
+  translation: Record<string, Record<string, string>> | null
 }
 
 export interface RelatedSource {

@@ -1959,6 +1959,7 @@ const serverDbEntryNames = [
   "local_favorite.db",
   "read_later.db",
   "cookie.db",
+  "domain.db",
 ];
 
 const serverDbBackupEntryNames = [...serverDbEntryNames, "appdata.json", "implicitData.json"];
@@ -2516,6 +2517,7 @@ function serverDbEntryPath(profileRoot, entryName) {
   if (!serverDbEntryNames.includes(entryName)) {
     throw createHttpError(400, "Unsupported server DB entry");
   }
+  if (entryName === "domain.db") return join(profileRoot, "domain.db");
   return join(profileRoot, "db", entryName);
 }
 
@@ -5821,6 +5823,7 @@ async function extractSourceCapabilities({ profileRoot, sourceKey }) {
     account: raw.account || null,
     favorites: raw.favorites || null,
     settings: raw.settings || null,
+    translation: raw.translation || null,
   };
 }
 

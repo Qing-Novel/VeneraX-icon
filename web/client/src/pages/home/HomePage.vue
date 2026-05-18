@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import ProxiedImage from '@/components/ProxiedImage.vue'
 import { listHistory, getComicSources, listFavorites } from '@/services/server-db'
@@ -63,10 +63,23 @@ async function refreshSyncStatus() {
   syncStatus.value.lastError = syncStore.lastError || syncStatus.value.lastError
 }
 
+let visibilityHandler: (() => void) | null = null
+
 onMounted(async () => {
   await syncStore.bootstrapAutoDownload()
   await settingsStore.loadSettings()
   await refreshHomeData()
+
+  visibilityHandler = () => {
+    if (document.visibilityState === 'visible') refreshHomeData()
+  }
+  document.addEventListener('visibilitychange', visibilityHandler)
+})
+
+onUnmounted(() => {
+  if (visibilityHandler) {
+    document.removeEventListener('visibilitychange', visibilityHandler)
+  }
 })
 
 async function doUpload() {

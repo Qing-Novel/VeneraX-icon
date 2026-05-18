@@ -613,6 +613,7 @@ function setStatusFilter(status: 'all' | 'uncompleted' | 'completed') {
   flex: 1;
   overflow-y: auto;
   padding: 0 16px 16px;
+  padding-bottom: calc(16px + 50px + env(safe-area-inset-bottom, 0px));
   will-change: scroll-position;
   transform: translateZ(0);
 }
