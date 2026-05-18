@@ -2,10 +2,17 @@
 import { ref, onMounted, computed, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiPost } from '@/services/api'
-import { getComicSources } from '@/services/server-db'
+import { getComicSources, getSourceCapabilities } from '@/services/server-db'
 import { useSettingsStore } from '@/stores/settings'
 import ComicCard from '@/components/ComicCard.vue'
-import type { ComicSource } from '@/types'
+import type { ComicSource, SourceCapabilities } from '@/types'
+
+interface ExploreTab {
+  sourceKey: string
+  sourceName: string
+  exploreIndex: number
+  title: string
+}
 
 interface ExploreSection {
   title: string
@@ -16,7 +23,8 @@ interface ExploreSection {
 const route = useRoute()
 const router = useRouter()
 const settingsStore = useSettingsStore()
-const sources = ref<ComicSource[]>([])
+
+const tabs = ref<ExploreTab[]>([])
 const activeTab = ref(0)
 const comics = ref<Record<string, Record<string, any>[]>>({})
 const sections = ref<Record<string, ExploreSection[]>>({})
@@ -29,7 +37,13 @@ const showFab = ref(true)
 let lastScrollTop = 0
 let scrollEl: HTMLElement | null = null
 
-const currentSourceKey = computed(() => sources.value[activeTab.value]?.key ?? '')
+function tabKey(tab: ExploreTab): string {
+  return `${tab.sourceKey}:${tab.exploreIndex}`
+}
+
+const currentTab = computed(() => tabs.value[activeTab.value])
+const currentTabKey = computed(() => currentTab.value ? tabKey(currentTab.value) : '')
+
 const gridStyle = computed(() => {
   const scale = Number(settingsStore.settings.thumbnailSize || 1)
   return settingsStore.settings.thumbnailMode === 'brief'
@@ -43,65 +57,72 @@ const gridStyle = computed(() => {
       }
 })
 
-async function loadComics(sourceKey: string, page = 1, append = false) {
-  if (!sourceKey) return
-  if (loading.value[sourceKey]) return
-  loading.value[sourceKey] = true
+async function loadComics(tab: ExploreTab, page = 1, append = false) {
+  if (!tab.sourceKey) return
+  const key = tabKey(tab)
+  if (loading.value[key]) return
+  loading.value[key] = true
   try {
-    // Server now merges cached comic basic info (author, status, updateTime, etc.)
-    // into each comic in the explore response, so no client-side enrichment needed.
-    const res = await apiPost<any>('/api/server-db/explore/list', { sourceKey, page })
+    const res = await apiPost<any>('/api/server-db/explore/list', {
+      sourceKey: tab.sourceKey,
+      page,
+      exploreIndex: tab.exploreIndex,
+    })
     if (res?.type === 'multiPart' && Array.isArray(res.sections)) {
-      exploreType.value[sourceKey] = 'multiPart'
-      sections.value[sourceKey] = res.sections
-      finished.value[sourceKey] = true
+      exploreType.value[key] = 'multiPart'
+      sections.value[key] = res.sections
+      finished.value[key] = true
     } else {
-      exploreType.value[sourceKey] = 'list'
+      exploreType.value[key] = 'list'
       const items: Record<string, any>[] = res?.comics ?? res?.items ?? []
       if (append) {
-        comics.value[sourceKey] = [...(comics.value[sourceKey] ?? []), ...items]
+        comics.value[key] = [...(comics.value[key] ?? []), ...items]
       } else {
-        comics.value[sourceKey] = items
+        comics.value[key] = items
       }
-      pages.value[sourceKey] = page
-      if (items.length === 0) finished.value[sourceKey] = true
+      pages.value[key] = page
+      if (items.length === 0) finished.value[key] = true
     }
   } catch (e) {
     console.error('Failed to load explore comics:', e)
   } finally {
-    loading.value[sourceKey] = false
+    loading.value[key] = false
   }
 }
 
 async function onTabChange(index: number) {
   activeTab.value = index
-  const key = sources.value[index]?.key
-  if (key && !comics.value[key]) {
-    await loadComics(key)
+  const tab = tabs.value[index]
+  if (!tab) return
+  const key = tabKey(tab)
+  if (!comics.value[key] && !sections.value[key]) {
+    await loadComics(tab)
   }
 }
 
 async function onRefresh() {
-  const key = currentSourceKey.value
-  if (!key) return
+  const tab = currentTab.value
+  if (!tab) return
+  const key = tabKey(tab)
   refreshingTab.value[key] = true
   finished.value[key] = false
-  await loadComics(key, 1, false)
+  await loadComics(tab, 1, false)
   refreshingTab.value[key] = false
 }
 
 async function onLoadMore() {
-  const key = currentSourceKey.value
+  const tab = currentTab.value
+  if (!tab) return
+  const key = tabKey(tab)
   if (!key || finished.value[key] || loading.value[key]) return
   const nextPage = (pages.value[key] ?? 1) + 1
-  await loadComics(key, nextPage, true)
+  await loadComics(tab, nextPage, true)
 }
 
 function handleViewMore(section: ExploreSection, sourceKey: string) {
   if (!section.viewMore) return
   const vm = section.viewMore
 
-  // Object format: { page: "search"|"category", attributes: {...} }
   if (typeof vm === 'object' && vm.page) {
     if (vm.page === 'search') {
       const text = vm.attributes?.text || vm.attributes?.keyword || ''
@@ -114,7 +135,6 @@ function handleViewMore(section: ExploreSection, sourceKey: string) {
     return
   }
 
-  // String format: "search:keyword" or "category:name" or "category:name@param"
   if (typeof vm === 'string') {
     const segments = vm.split(':')
     const page = segments[0]
@@ -141,15 +161,51 @@ function onScroll(e: Event) {
 
 onMounted(async () => {
   await settingsStore.loadSettings()
-  const list = await getComicSources()
-  sources.value = list
-  if (list.length > 0) {
-    const requestedSource = String(route.query.source || '')
-    const targetIndex = requestedSource ? list.findIndex(s => s.key === requestedSource) : -1
-    const startIndex = targetIndex >= 0 ? targetIndex : 0
-    activeTab.value = startIndex
-    await loadComics(list[startIndex].key)
+  const sources = await getComicSources()
+
+  const allTabs: ExploreTab[] = []
+  for (const source of sources) {
+    try {
+      const caps = await getSourceCapabilities(source.key)
+      if (caps?.explore?.length) {
+        for (let i = 0; i < caps.explore.length; i++) {
+          const ep = caps.explore[i]
+          allTabs.push({
+            sourceKey: source.key,
+            sourceName: source.name,
+            exploreIndex: i,
+            title: ep.title || source.name,
+          })
+        }
+      } else {
+        allTabs.push({
+          sourceKey: source.key,
+          sourceName: source.name,
+          exploreIndex: 0,
+          title: source.name,
+        })
+      }
+    } catch {
+      allTabs.push({
+        sourceKey: source.key,
+        sourceName: source.name,
+        exploreIndex: 0,
+        title: source.name,
+      })
+    }
   }
+
+  tabs.value = allTabs
+
+  if (allTabs.length > 0) {
+    const requestedSource = String(route.query.source || '')
+    const targetIndex = requestedSource
+      ? allTabs.findIndex(t => t.sourceKey === requestedSource)
+      : -1
+    activeTab.value = targetIndex >= 0 ? targetIndex : 0
+    await loadComics(allTabs[activeTab.value])
+  }
+
   setTimeout(() => {
     scrollEl = document.querySelector('.explore-content')
     scrollEl?.addEventListener('scroll', onScroll)
@@ -163,18 +219,15 @@ onUnmounted(() => {
 
 <template>
   <div class="explore-page">
-    <!-- Search entry -->
     <div class="explore-search-bar" @click="$router.push('/search')">
       <van-icon name="search" size="16" />
       <span>搜索漫画</span>
     </div>
 
-    <!-- Empty state when no sources -->
-    <van-empty v-if="!sources.length && !loading['__init']" description="暂无漫画源" />
+    <van-empty v-if="!tabs.length" description="暂无漫画源" />
 
-    <!-- Tabs -->
     <van-tabs
-      v-if="sources.length"
+      v-if="tabs.length"
       v-model:active="activeTab"
       class="explore-tabs"
       color="#4f6ef7"
@@ -183,26 +236,28 @@ onUnmounted(() => {
       sticky
       @change="onTabChange"
     >
-      <van-tab v-for="source in sources" :key="source.key" :title="source.name">
-        <van-pull-refresh v-model="refreshingTab[source.key]" @refresh="onRefresh">
+      <van-tab v-for="tab in tabs" :key="tabKey(tab)" :title="tab.title">
+        <van-pull-refresh v-model="refreshingTab[tabKey(tab)]" @refresh="onRefresh">
           <div class="explore-content" @scroll="onScroll">
-            <!-- Skeleton loading -->
-            <div v-if="loading[source.key] && !comics[source.key]?.length && !sections[source.key]?.length" class="comic-grid" :style="gridStyle">
+            <div
+              v-if="loading[tabKey(tab)] && !comics[tabKey(tab)]?.length && !sections[tabKey(tab)]?.length"
+              class="comic-grid"
+              :style="gridStyle"
+            >
               <div v-for="n in 12" :key="n" class="comic-card skeleton-card">
                 <div class="skeleton-cover"></div>
                 <div class="skeleton-title"></div>
               </div>
             </div>
 
-            <!-- Multi-part sections -->
-            <template v-if="exploreType[source.key] === 'multiPart' && sections[source.key]?.length">
-              <div v-for="section in sections[source.key]" :key="section.title" class="explore-section">
+            <template v-if="exploreType[tabKey(tab)] === 'multiPart' && sections[tabKey(tab)]?.length">
+              <div v-for="section in sections[tabKey(tab)]" :key="section.title" class="explore-section">
                 <div class="section-header">
                   <h3 class="section-title">{{ section.title }}</h3>
                   <span
                     v-if="section.viewMore"
                     class="section-view-more"
-                    @click="handleViewMore(section, source.key)"
+                    @click="handleViewMore(section, tab.sourceKey)"
                   >查看更多 &gt;</span>
                 </div>
                 <div class="comic-grid" :style="gridStyle">
@@ -210,37 +265,34 @@ onUnmounted(() => {
                     v-for="comic in section.comics"
                     :key="comic.id"
                     :comic="comic"
-                    :source-key="source.key"
-                    :source-name="source.name"
+                    :source-key="tab.sourceKey"
+                    :source-name="tab.sourceName"
                     class="comic-card"
                   />
                 </div>
               </div>
             </template>
 
-            <!-- Comic grid (list mode) -->
-            <template v-else-if="comics[source.key]?.length">
+            <template v-else-if="comics[tabKey(tab)]?.length">
               <div class="comic-grid" :style="gridStyle">
                 <ComicCard
-                  v-for="comic in comics[source.key] ?? []"
+                  v-for="comic in comics[tabKey(tab)] ?? []"
                   :key="comic.id"
                   :comic="comic"
-                  :source-key="source.key"
-                  :source-name="source.name"
+                  :source-key="tab.sourceKey"
+                  :source-name="tab.sourceName"
                   class="comic-card"
                 />
               </div>
 
-              <!-- Load more -->
-              <div v-if="!finished[source.key]" class="load-more">
-                <van-loading v-if="loading[source.key]" size="24px" />
+              <div v-if="!finished[tabKey(tab)]" class="load-more">
+                <van-loading v-if="loading[tabKey(tab)]" size="24px" />
                 <van-button v-else size="small" plain @click="onLoadMore">加载更多</van-button>
               </div>
             </template>
 
-            <!-- Empty state -->
             <van-empty
-              v-if="!loading[source.key] && !comics[source.key]?.length && !sections[source.key]?.length"
+              v-if="!loading[tabKey(tab)] && !comics[tabKey(tab)]?.length && !sections[tabKey(tab)]?.length"
               description="暂无内容"
               image="search"
             />
@@ -249,9 +301,8 @@ onUnmounted(() => {
       </van-tab>
     </van-tabs>
 
-    <!-- FAB -->
     <transition name="fab-fade">
-      <div v-show="showFab && sources.length" class="fab" @click="onRefresh">
+      <div v-show="showFab && tabs.length" class="fab" @click="onRefresh">
         <van-icon name="replay" size="22" />
       </div>
     </transition>
@@ -279,9 +330,7 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
-.explore-section {
-  margin-bottom: 16px;
-}
+.explore-section { margin-bottom: 16px; }
 
 .section-header {
   display: flex;
@@ -305,9 +354,7 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-.section-view-more:active {
-  opacity: 0.7;
-}
+.section-view-more:active { opacity: 0.7; }
 
 .explore-tabs {
   flex: 1;
@@ -315,14 +362,8 @@ onUnmounted(() => {
   flex-direction: column;
 }
 
-:deep(.van-tabs__content) {
-  flex: 1;
-  overflow: hidden;
-}
-
-:deep(.van-tab__panel) {
-  height: 100%;
-}
+:deep(.van-tabs__content) { flex: 1; overflow: hidden; }
+:deep(.van-tab__panel) { height: 100%; }
 
 .explore-content {
   height: calc(100vh - 94px);
@@ -347,9 +388,7 @@ onUnmounted(() => {
   contain-intrinsic-size: auto 300px;
 }
 
-.comic-card:active {
-  transform: scale(0.97);
-}
+.comic-card:active { transform: scale(0.97); }
 
 .comic-cover {
   width: 100%;
@@ -382,10 +421,7 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 
-/* Skeleton */
-.skeleton-card {
-  pointer-events: none;
-}
+.skeleton-card { pointer-events: none; }
 
 .skeleton-cover {
   width: 100%;
@@ -411,14 +447,12 @@ onUnmounted(() => {
   100% { background-position: -200% 0; }
 }
 
-/* Load more */
 .load-more {
   display: flex;
   justify-content: center;
   padding: 16px 0 24px;
 }
 
-/* FAB */
 .fab {
   position: fixed;
   bottom: 72px;
@@ -437,9 +471,7 @@ onUnmounted(() => {
   transition: transform 0.2s ease, opacity 0.2s ease;
 }
 
-.fab:active {
-  transform: scale(0.92);
-}
+.fab:active { transform: scale(0.92); }
 
 .fab-fade-enter-active,
 .fab-fade-leave-active {
