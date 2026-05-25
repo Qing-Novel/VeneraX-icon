@@ -82,18 +82,7 @@ onUnmounted(() => {
   }
 })
 
-async function doUpload() {
-  if (syncBusy.value) return
-  syncBusy.value = true
-  try {
-    await syncStore.upload()
-    await refreshSyncStatus()
-  } catch (e: any) {
-    syncStatus.value.lastError = e.message
-  } finally { syncBusy.value = false }
-}
-
-async function doDownload() {
+async function doSync() {
   if (syncBusy.value) return
   syncBusy.value = true
   try {
@@ -101,7 +90,12 @@ async function doDownload() {
     await refreshHomeData()
     await refreshSyncStatus()
   } catch (e: any) {
-    syncStatus.value.lastError = e.message
+    try {
+      await syncStore.upload()
+      await refreshSyncStatus()
+    } catch (e2: any) {
+      syncStatus.value.lastError = e2.message
+    }
   } finally { syncBusy.value = false }
 }
 
@@ -138,15 +132,11 @@ function goSources(sourceKey?: string) {
         <van-icon name="exchange" class="sync-icon" />
         <span v-if="syncStatus.lastError" class="sync-text sync-error">{{ syncStatus.lastError }}</span>
         <span v-else-if="syncBusy" class="sync-text">同步中...</span>
-        <span v-else-if="syncStatus.autoSyncEnabled" class="sync-text">同步数据</span>
         <span v-else class="sync-text">同步数据</span>
       </div>
       <div class="sync-actions">
-        <button class="sync-btn" :disabled="syncBusy" @click="doUpload" title="上传">
-          <van-icon name="arrow-up" />
-        </button>
-        <button class="sync-btn" :disabled="syncBusy" @click="doDownload" title="下载">
-          <van-icon name="arrow-down" />
+        <button class="sync-btn" :disabled="syncBusy" @click="doSync" title="同步">
+          <van-icon name="exchange" />
         </button>
       </div>
     </div>
