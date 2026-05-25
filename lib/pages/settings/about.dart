@@ -10,30 +10,8 @@ class AboutSettings extends StatefulWidget {
 class _AboutSettingsState extends State<AboutSettings> {
   bool isCheckingUpdate = false;
 
-  String get _repoOwner =>
-      (appdata.settings['updateRepoOwner'] as String?) ?? 'Kyosee';
-  String get _repoName =>
-      (appdata.settings['updateRepoName'] as String?) ?? 'venera';
-  bool get _usePrivateRepo =>
-      appdata.settings['updateUsePrivateRepo'] == true;
-  String get _repoToken =>
-      (appdata.settings['updateRepoToken'] as String?) ?? '';
-
-  @override
-  void initState() {
-    super.initState();
-    _migrateLegacyRepoDefaults();
-  }
-
-  void _migrateLegacyRepoDefaults() {
-    final owner = _repoOwner;
-    final repo = _repoName;
-    if (owner.toLowerCase() == 'haukuen' && repo.toLowerCase() == 'venera') {
-      appdata.settings['updateRepoOwner'] = 'Kyosee';
-      appdata.settings['updateRepoName'] = 'venera';
-      appdata.saveData();
-    }
-  }
+  static const _repoOwner = 'Kyosee';
+  static const _repoName = 'venera';
 
   @override
   Widget build(BuildContext context) {
@@ -77,22 +55,13 @@ class _AboutSettingsState extends State<AboutSettings> {
             },
           ).fixHeight(32),
         ).toSliver(),
-        ListTile(
-          title: Text("GitHub Update Source".tl),
-          subtitle: Text(
-            _usePrivateRepo
-                ? "$_repoOwner/$_repoName - ${"Private Repository".tl}"
-                : "$_repoOwner/$_repoName - ${"Public Repository".tl}",
-          ),
-          trailing: const Icon(Icons.tune),
-          onTap: _editGithubUpdateSettings,
-        ).toSliver(),
         _SwitchSetting(
           title: "Check for updates on startup".tl,
           settingKey: "checkUpdateOnStart",
         ).toSliver(),
         ListTile(
           title: Text("Repository".tl),
+          subtitle: const Text("$_repoOwner/$_repoName"),
           trailing: const Icon(Icons.open_in_new),
           onTap: () {
             launchUrlString("https://github.com/$_repoOwner/$_repoName");
@@ -101,131 +70,15 @@ class _AboutSettingsState extends State<AboutSettings> {
       ],
     );
   }
-
-  void _editGithubUpdateSettings() {
-    final ownerController = TextEditingController(text: _repoOwner);
-    final repoController = TextEditingController(text: _repoName);
-    final tokenController = TextEditingController(text: _repoToken);
-    var usePrivateRepo = _usePrivateRepo;
-    var syncToken = appdata.settings['syncUpdateRepoToken'] == true;
-    var obscureToken = true;
-
-    showDialog(
-      context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return ContentDialog(
-              title: "GitHub Update Source".tl,
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  TextField(
-                    controller: ownerController,
-                    decoration: InputDecoration(
-                      labelText: "Repository Owner".tl,
-                      border: const OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: repoController,
-                    decoration: InputDecoration(
-                      labelText: "Repository Name".tl,
-                      border: const OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    value: usePrivateRepo,
-                    onChanged: (value) =>
-                        setDialogState(() => usePrivateRepo = value),
-                    title: Text("Use Private Repository".tl),
-                  ),
-                  const SizedBox(height: 8),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    value: syncToken,
-                    onChanged: (value) =>
-                        setDialogState(() => syncToken = value),
-                    title: Text("Sync GitHub token in data sync".tl),
-                  ),
-                  if (usePrivateRepo) ...[
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: tokenController,
-                      obscureText: obscureToken,
-                      autocorrect: false,
-                      enableSuggestions: false,
-                      decoration: InputDecoration(
-                        labelText: "GitHub Token".tl,
-                        hintText: "Fine-grained token with repository read access".tl,
-                        border: const OutlineInputBorder(),
-                        suffixIcon: IconButton(
-                          onPressed: () =>
-                              setDialogState(() => obscureToken = !obscureToken),
-                          icon: Icon(obscureToken
-                              ? Icons.visibility_off_outlined
-                              : Icons.visibility_outlined),
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ).paddingHorizontal(16).paddingVertical(8),
-              actions: [
-                Button.text(
-                  onPressed: () => Navigator.pop(dialogContext),
-                  child: Text("Cancel".tl),
-                ),
-                Button.filled(
-                  onPressed: () {
-                    final owner = ownerController.text.trim();
-                    final repo = repoController.text.trim();
-                    final token = tokenController.text.trim();
-                    if (owner.isEmpty || repo.isEmpty) {
-                      context.showMessage(message: "Repository owner and name cannot be empty".tl);
-                      return;
-                    }
-                    if (usePrivateRepo && token.isEmpty) {
-                      context.showMessage(message: "GitHub token is required for private repository updates".tl);
-                      return;
-                    }
-                    appdata.settings['updateRepoOwner'] = owner;
-                    appdata.settings['updateRepoName'] = repo;
-                    appdata.settings['updateUsePrivateRepo'] = usePrivateRepo;
-                    appdata.settings['updateRepoToken'] = token;
-                    appdata.settings['syncUpdateRepoToken'] = syncToken;
-                    appdata.saveData();
-                    if (!mounted) return;
-                    setState(() {});
-                    Navigator.pop(dialogContext);
-                    this.context.showMessage(message: "Saved".tl);
-                  },
-                  child: Text("Save".tl),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
 }
 // --- Data classes ---
 
 class _GithubUpdateConfig {
   final String owner;
   final String repo;
-  final bool usePrivateRepo;
-  final String? token;
   const _GithubUpdateConfig({
     required this.owner,
     required this.repo,
-    required this.usePrivateRepo,
-    this.token,
   });
 }
 
@@ -273,23 +126,9 @@ class _UpdateCheckResult {
 // --- Config & Headers ---
 
 _GithubUpdateConfig _readGithubUpdateConfig() {
-  var owner = (appdata.settings['updateRepoOwner'] as String?) ?? 'Kyosee';
-  var repo = (appdata.settings['updateRepoName'] as String?) ?? 'venera';
-  if (owner.toLowerCase() == 'haukuen' && repo.toLowerCase() == 'venera') {
-    owner = 'Kyosee';
-    repo = 'venera';
-    appdata.settings['updateRepoOwner'] = owner;
-    appdata.settings['updateRepoName'] = repo;
-    appdata.saveData();
-  }
-  var usePrivate = appdata.settings['updateUsePrivateRepo'] == true;
-  var token = (appdata.settings['updateRepoToken'] as String?) ?? '';
-  final tokenOrNull = token.isEmpty ? null : token;
-  return _GithubUpdateConfig(
-    owner: owner,
-    repo: repo,
-    usePrivateRepo: usePrivate,
-    token: tokenOrNull,
+  return const _GithubUpdateConfig(
+    owner: 'Kyosee',
+    repo: 'venera',
   );
 }
 
@@ -297,24 +136,14 @@ Map<String, String> _buildGithubHeaders(
   _GithubUpdateConfig config, {
   bool binary = false,
 }) {
-  final headers = <String, String>{
+  return {
     "Accept": binary ? "application/octet-stream" : "application/vnd.github+json",
   };
-  if (config.token != null && config.token!.isNotEmpty) {
-    headers["Authorization"] = "Bearer ${config.token}";
-    if (!App.isWeb) {
-      headers["X-GitHub-Api-Version"] = "2022-11-28";
-    }
-  }
-  return headers;
 }
 
 // --- Fetch & Compare ---
 
 Future<_GitHubRelease> _fetchLatestRelease(_GithubUpdateConfig config) async {
-  if (config.usePrivateRepo && (config.token == null || config.token!.isEmpty)) {
-    throw Exception("GitHub token is required for private repository updates".tl);
-  }
   final url =
       "https://api.github.com/repos/${config.owner}/${config.repo}/releases/latest";
   final response = await AppDio().get(

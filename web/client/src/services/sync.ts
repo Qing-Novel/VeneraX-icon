@@ -79,10 +79,6 @@ const FIXED_DISABLE_SYNC_FIELDS = [
   'disableSyncFields',
   'deviceId',
   'followUpdatesFolder',
-  'updateRepoOwner',
-  'updateRepoName',
-  'updateUsePrivateRepo',
-  'updateRepoToken',
 ]
 
 function appdataForUpload(appdata: Record<string, any>, dataVersion: number, disableSyncFields?: string) {

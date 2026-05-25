@@ -101,10 +101,6 @@ class Appdata with Init {
     "disableSyncFields",
     "deviceId",
     "followUpdatesFolder",
-    "updateRepoOwner",
-    "updateRepoName",
-    "updateUsePrivateRepo",
-    "updateRepoToken",
   ];
 
   /// Sync data from another device
