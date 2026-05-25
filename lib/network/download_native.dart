@@ -163,7 +163,12 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
   }
 
   @override
-  double get progress => _totalCount == 0 ? 0 : _downloadedCount / _totalCount;
+  double get progress {
+    if (_totalChapters > 0) {
+      return _chapter / _totalChapters;
+    }
+    return _totalCount == 0 ? 0 : _downloadedCount / _totalCount;
+  }
 
   bool _isRunning = false;
 
@@ -181,6 +186,9 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
 
   /// Total image count
   int _totalCount = 0;
+
+  /// Total chapters to download
+  int _totalChapters = 0;
 
   /// Current downloading image index
   int _index = 0;
@@ -357,6 +365,7 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
       var chapterKeys = comic!.chapters!.allChapters.keys
           .where((i) => chapters == null || chapters!.contains(i))
           .toList();
+      _totalChapters = chapterKeys.length;
       const prefetchCount = 3;
       var prefetchFutures = <String, Future<Res<List<String>>>>{};
 
@@ -426,7 +435,11 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
           }
           _index++;
           _downloadedCount++;
-          _message = "$_downloadedCount/$_totalCount";
+          _message = "Ep.@a @b/@c".tlParams({
+            "a": ci + 1,
+            "b": _index,
+            "c": images.length,
+          });
           await LocalManager().saveCurrentDownloadingTasks();
         }
         _index = 0;
@@ -493,6 +506,7 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
       "images": _images,
       "downloadedCount": _downloadedCount,
       "totalCount": _totalCount,
+      "totalChapters": _totalChapters,
       "index": _index,
       "chapter": _chapter,
     };
@@ -523,6 +537,7 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
       .._images = images
       .._downloadedCount = json["downloadedCount"]
       .._totalCount = json["totalCount"]
+      .._totalChapters = json["totalChapters"] ?? 0
       .._index = json["index"]
       .._chapter = json["chapter"];
   }
