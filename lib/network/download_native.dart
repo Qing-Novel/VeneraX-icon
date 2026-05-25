@@ -347,82 +347,113 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
       } else {
         _images = {};
         _totalCount = 0;
-        int cpCount = 0;
-        var chapterKeys = comic!.chapters!.allChapters.keys
-            .where((i) => chapters == null || chapters!.contains(i))
-            .where((i) => _images![i] == null)
-            .toList();
-        int totalCpCount = chapterKeys.length;
-        const concurrency = 4;
-        var errors = <String>[];
-
-        for (var batch = 0; batch < chapterKeys.length; batch += concurrency) {
-          if (!_isRunning) return;
-          var end = (batch + concurrency).clamp(0, chapterKeys.length);
-          var batchKeys = chapterKeys.sublist(batch, end);
-          var futures = batchKeys.map((key) async {
-            return MapEntry(key, await _runWithRetry(() async {
-              var r = await source.loadComicPages!(comicId, key);
-              if (r.error) {
-                throw r.errorMessage!;
-              } else {
-                return r.data;
-              }
-            }));
-          }).toList();
-
-          var results = await Future.wait(futures);
-          if (!_isRunning) return;
-
-          for (var entry in results) {
-            if (entry.value.error) {
-              errors.add(entry.value.errorMessage!);
-            } else {
-              _images![entry.key] = entry.value.data;
-              _totalCount += entry.value.data.length;
-            }
-          }
-          cpCount += batchKeys.length;
-          _message = "Fetching image list (@a/@b)".tlParams({
-            "a": cpCount,
-            "b": totalCpCount,
-          });
-          notifyListeners();
-        }
-
-        if (errors.isNotEmpty) {
-          Log.error("Download", errors.first);
-          _setError("Error: ${errors.first}");
-          return;
-        }
       }
       _message = "$_downloadedCount/$_totalCount";
       notifyListeners();
       await LocalManager().saveCurrentDownloadingTasks();
     }
 
-    while (_chapter < _images!.length) {
-      var images = _images![_images!.keys.elementAt(_chapter)]!;
-      tasks.clear();
-      while (_index < images.length) {
-        _scheduleTasks();
-        var task = tasks[_index]!;
-        await task.wait();
-        if (isPaused) {
-          return;
+    if (comic!.chapters != null) {
+      var chapterKeys = comic!.chapters!.allChapters.keys
+          .where((i) => chapters == null || chapters!.contains(i))
+          .toList();
+      const prefetchCount = 3;
+      var prefetchFutures = <String, Future<Res<List<String>>>>{};
+
+      void startPrefetch(int fromIndex) {
+        for (var p = fromIndex;
+            p < (fromIndex + prefetchCount).clamp(0, chapterKeys.length);
+            p++) {
+          var key = chapterKeys[p];
+          if (_images![key] != null || prefetchFutures.containsKey(key)) {
+            continue;
+          }
+          prefetchFutures[key] = _runWithRetry(() async {
+            var r = await source.loadComicPages!(comicId, key);
+            if (r.error) {
+              throw r.errorMessage!;
+            } else {
+              return r.data;
+            }
+          });
         }
-        if (task.error != null) {
-          Log.error("Download", task.error.toString());
-          _setError("Error: ${task.error}");
-          return;
-        }
-        _index++;
-        _downloadedCount++;
-        _message = "$_downloadedCount/$_totalCount";
-        await LocalManager().saveCurrentDownloadingTasks();
       }
-      _index = 0;
-      _chapter++;
+
+      for (var ci = _chapter; ci < chapterKeys.length; ci++) {
+        if (!_isRunning) return;
+        var key = chapterKeys[ci];
+
+        startPrefetch(ci);
+
+        if (_images![key] == null) {
+          _message = "Fetching image list (@a/@b)".tlParams({
+            "a": ci + 1,
+            "b": chapterKeys.length,
+          });
+          notifyListeners();
+
+          var future = prefetchFutures.remove(key) ?? _runWithRetry(() async {
+            var r = await source.loadComicPages!(comicId, key);
+            if (r.error) {
+              throw r.errorMessage!;
+            } else {
+              return r.data;
+            }
+          });
+          var res = await future;
+          if (!_isRunning) return;
+          if (res.error) {
+            Log.error("Download", res.errorMessage!);
+            _setError("Error: ${res.errorMessage}");
+            return;
+          }
+          _images![key] = res.data;
+          _totalCount += res.data.length;
+          await LocalManager().saveCurrentDownloadingTasks();
+        }
+
+        var images = _images![key]!;
+        tasks.clear();
+        while (_index < images.length) {
+          _scheduleTasks();
+          var task = tasks[_index]!;
+          await task.wait();
+          if (isPaused) return;
+          if (task.error != null) {
+            Log.error("Download", task.error.toString());
+            _setError("Error: ${task.error}");
+            return;
+          }
+          _index++;
+          _downloadedCount++;
+          _message = "$_downloadedCount/$_totalCount";
+          await LocalManager().saveCurrentDownloadingTasks();
+        }
+        _index = 0;
+        _chapter++;
+      }
+    } else {
+      while (_chapter < _images!.length) {
+        var images = _images![_images!.keys.elementAt(_chapter)]!;
+        tasks.clear();
+        while (_index < images.length) {
+          _scheduleTasks();
+          var task = tasks[_index]!;
+          await task.wait();
+          if (isPaused) return;
+          if (task.error != null) {
+            Log.error("Download", task.error.toString());
+            _setError("Error: ${task.error}");
+            return;
+          }
+          _index++;
+          _downloadedCount++;
+          _message = "$_downloadedCount/$_totalCount";
+          await LocalManager().saveCurrentDownloadingTasks();
+        }
+        _index = 0;
+        _chapter++;
+      }
     }
 
     LocalManager().completeTask(this);
