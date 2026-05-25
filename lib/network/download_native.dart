@@ -13,6 +13,7 @@ import 'package:venera/foundation/res.dart';
 import 'package:venera/network/images.dart';
 import 'package:venera/utils/ext.dart';
 import 'package:venera/utils/file_type.dart';
+import 'package:venera/utils/translations.dart';
 import 'package:venera/utils/io.dart';
 import 'package:zip_flutter/zip_flutter.dart';
 
@@ -145,7 +146,7 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
       return;
     }
     _isRunning = false;
-    _message = "Paused";
+    _message = "Paused".tl;
     _currentSpeed = 0;
     var shouldMove = <int>[];
     for (var entry in tasks.entries) {
@@ -168,7 +169,7 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
 
   bool _isError = false;
 
-  String _message = "Fetching comic info...";
+  String _message = "Fetching comic info...".tl;
 
   String? _cover;
 
@@ -193,6 +194,7 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
       (appdata.settings["downloadThreads"] as num).toInt();
 
   void _scheduleTasks() {
+    if (!_isRunning) return;
     var images = _images![_images!.keys.elementAt(_chapter)]!;
     var downloading = 0;
     for (var i = _index; i < images.length; i++) {
@@ -230,7 +232,7 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
       );
       tasks[i] = task;
       task.wait().then((task) {
-        if (task.isComplete) {
+        if (task.isComplete && _isRunning) {
           _scheduleTasks();
         }
       });
@@ -242,13 +244,13 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
   void resume() async {
     if (_isRunning) return;
     _isError = false;
-    _message = "Resuming...";
+    _message = "Resuming...".tl;
     _isRunning = true;
     notifyListeners();
     runRecorder();
 
     if (comic == null) {
-      _message = "Fetching comic info...";
+      _message = "Fetching comic info...".tl;
       notifyListeners();
       var res = await _runWithRetry(() async {
         var r = await source.loadComicInfo!(comicId);
@@ -290,7 +292,7 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
     await LocalManager().saveCurrentDownloadingTasks();
 
     if (_cover == null) {
-      _message = "Downloading cover...";
+      _message = "Downloading cover...".tl;
       notifyListeners();
       var res = await _runWithRetry(() async {
         Uint8List? data;
@@ -321,7 +323,7 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
 
     if (_images == null) {
       if (comic!.chapters == null) {
-        _message = "Fetching image list...";
+        _message = "Fetching image list...".tl;
         notifyListeners();
         var res = await _runWithRetry(() async {
           var r = await source.loadComicPages!(comicId, null);
@@ -356,7 +358,10 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
             _totalCount += _images![i]!.length;
             continue;
           }
-          _message = "Fetching image list ($cpCount/$totalCpCount)...";
+          _message = "Fetching image list (@a/@b)".tlParams({
+            "a": cpCount,
+            "b": totalCpCount,
+          });
           notifyListeners();
           var res = await _runWithRetry(() async {
             var r = await source.loadComicPages!(comicId, i);
@@ -669,7 +674,7 @@ class ArchiveDownloadTask extends DownloadTask {
 
   FileDownloader? _downloader;
 
-  String _message = "Fetching comic info...";
+  String _message = "Fetching comic info...".tl;
 
   bool _isRunning = false;
 
@@ -721,7 +726,7 @@ class ArchiveDownloadTask extends DownloadTask {
   @override
   void pause() {
     _isRunning = false;
-    _message = "Paused";
+    _message = "Paused".tl;
     _downloader?.stop();
     notifyListeners();
   }
@@ -738,7 +743,7 @@ class ArchiveDownloadTask extends DownloadTask {
     _isError = false;
     _isRunning = true;
     notifyListeners();
-    _message = "Downloading...";
+    _message = "Downloading...".tl;
 
     if (path == null) {
       var dir = await LocalManager().findValidDirectory(
