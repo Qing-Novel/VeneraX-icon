@@ -502,7 +502,7 @@ class _LocalState extends State<_Local> {
       barrierDismissible: false,
       context: App.rootContext,
       builder: (context) {
-        return const _ImportComicsWidget();
+        return const ImportComicsWidget();
       },
     );
   }
@@ -588,14 +588,14 @@ class _LocalExportButton extends StatelessWidget {
   }
 }
 
-class _ImportComicsWidget extends StatefulWidget {
-  const _ImportComicsWidget();
+class ImportComicsWidget extends StatefulWidget {
+  const ImportComicsWidget({super.key});
 
   @override
-  State<_ImportComicsWidget> createState() => _ImportComicsWidgetState();
+  State<ImportComicsWidget> createState() => _ImportComicsWidgetState();
 }
 
-class _ImportComicsWidgetState extends State<_ImportComicsWidget> {
+class _ImportComicsWidgetState extends State<ImportComicsWidget> {
   int type = 0;
 
   bool loading = false;

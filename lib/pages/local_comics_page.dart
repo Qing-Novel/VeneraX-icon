@@ -24,7 +24,8 @@ class LocalComicsPage extends StatefulWidget {
   State<LocalComicsPage> createState() => _LocalComicsPageState();
 }
 
-class _LocalComicsPageState extends State<LocalComicsPage> {
+class _LocalComicsPageState extends State<LocalComicsPage>
+    with SingleTickerProviderStateMixin {
   late List<LocalComic> comics;
 
   late LocalSortType sortType;
@@ -53,19 +54,38 @@ class _LocalComicsPageState extends State<LocalComicsPage> {
     });
   }
 
+  late TabController _tabController;
+
   @override
   void initState() {
     var sort = appdata.implicitData["local_sort"] ?? "default";
     sortType = LocalSortType.fromString(sort);
     comics = LocalManager().getComics(sortType);
     LocalManager().addListener(update);
+    _tabController = TabController(length: 4, vsync: this);
+    _tabController.addListener(_onTabChanged);
     super.initState();
   }
 
   @override
   void dispose() {
+    _tabController.removeListener(_onTabChanged);
+    _tabController.dispose();
     LocalManager().removeListener(update);
     super.dispose();
+  }
+
+  void _onTabChanged() {
+    if (_tabController.indexIsChanging) return;
+    setState(() {
+      currentTab = switch (_tabController.index) {
+        1 => LocalComicStatus.downloaded,
+        2 => LocalComicStatus.downloading,
+        3 => LocalComicStatus.notDownloaded,
+        _ => null,
+      };
+    });
+    update();
   }
 
   void sort() {
@@ -341,21 +361,15 @@ class _LocalComicsPageState extends State<LocalComicsPage> {
             ),
           if (!searchMode && !multiSelectMode)
             SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      _buildFilterChip(null, "All".tl),
-                      const SizedBox(width: 8),
-                      _buildFilterChip(LocalComicStatus.downloaded, "Downloaded".tl),
-                      const SizedBox(width: 8),
-                      _buildFilterChip(LocalComicStatus.downloading, "Downloading".tl),
-                      const SizedBox(width: 8),
-                      _buildFilterChip(LocalComicStatus.notDownloaded, "Not Downloaded".tl),
-                    ],
-                  ),
+              child: Material(
+                child: AppTabBar(
+                  controller: _tabController,
+                  tabs: [
+                    Tab(text: "All".tl),
+                    Tab(text: "Downloaded".tl),
+                    Tab(text: "Downloading".tl),
+                    Tab(text: "Not Downloaded".tl),
+                  ],
                 ),
               ),
             ),
@@ -440,19 +454,6 @@ class _LocalComicsPageState extends State<LocalComicsPage> {
     );
   }
 
-  Widget _buildFilterChip(LocalComicStatus? status, String label) {
-    final isSelected = currentTab == status;
-    return FilterChip(
-      label: Text(label),
-      selected: isSelected,
-      onSelected: (selected) {
-        setState(() {
-          currentTab = selected ? status : null;
-        });
-        update();
-      },
-    );
-  }
 
   void _importVeneraComics() async {
     var file = await selectFile(ext: ['venera_comics']);
