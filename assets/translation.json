@@ -586,7 +586,16 @@
     "Clear specific reader settings for this device": "清除该设备的特殊阅读设置",
     "Enable device specific settings": "启用此设备特定设置",
     "Ignore Certificate Errors": "忽略证书错误",
-    "Mouse scroll speed": "鼠标滚动速度"
+    "Mouse scroll speed": "鼠标滚动速度",
+    "Downloaded": "已下载",
+    "Not Downloaded": "未下载",
+    "Import .venera_comics": "导入 .venera_comics",
+    "Export .venera_comics": "导出 .venera_comics",
+    "comics imported": "部漫画已导入",
+    "Importing": "导入中",
+    "Sync Local Comic Images": "同步本地漫画图包",
+    ".venera_comics file": ".venera_comics 文件",
+    "Select a .venera_comics file to import comics with metadata and images.": "选择一个 .venera_comics 文件以导入漫画元数据和图包。"
   },
   "zh_TW": {
     "Home": "首頁",
@@ -1175,6 +1184,15 @@
     "Clear specific reader settings for this device": "清除該裝置的特殊閱讀設定",
     "Enable device specific settings": "啟用此裝置特定設定",
     "Ignore Certificate Errors": "忽略證書錯誤",
-    "Mouse scroll speed": "滑鼠滾動速度"
+    "Mouse scroll speed": "滑鼠滾動速度",
+    "Downloaded": "已下載",
+    "Not Downloaded": "未下載",
+    "Import .venera_comics": "匯入 .venera_comics",
+    "Export .venera_comics": "匯出 .venera_comics",
+    "comics imported": "部漫畫已匯入",
+    "Importing": "匯入中",
+    "Sync Local Comic Images": "同步本地漫畫圖包",
+    ".venera_comics file": ".venera_comics 檔案",
+    "Select a .venera_comics file to import comics with metadata and images.": "選擇一個 .venera_comics 檔案以匯入漫畫元資料和圖包。"
   }
 }

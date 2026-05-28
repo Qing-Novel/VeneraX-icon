@@ -18,9 +18,11 @@ import 'package:venera/pages/image_favorites_page/image_favorites_page.dart';
 import 'package:venera/pages/search_page.dart';
 import 'package:venera/utils/data_sync.dart';
 import 'package:venera/utils/import_comic.dart';
+import 'package:venera/utils/io.dart';
 import 'package:venera/utils/server_db.dart';
 import 'package:venera/utils/tags_translation.dart';
 import 'package:venera/utils/translations.dart';
+import 'package:venera/utils/venera_comics.dart';
 
 import 'local_comics_page.dart';
 
@@ -556,7 +558,7 @@ class _LocalExportButton extends StatelessWidget {
     return Tooltip(
       message: "Export".tl,
       child: Material(
-        color: context.colorScheme.primary.toOpacity(0.08),
+        color: context.colorScheme.tertiary.toOpacity(0.08),
         borderRadius: BorderRadius.circular(15),
         child: InkWell(
           borderRadius: BorderRadius.circular(15),
@@ -567,7 +569,7 @@ class _LocalExportButton extends StatelessWidget {
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(15),
               border: Border.all(
-                color: context.colorScheme.primary.toOpacity(0.28),
+                color: context.colorScheme.tertiary.toOpacity(0.28),
                 width: 0.6,
               ),
             ),
@@ -576,7 +578,7 @@ class _LocalExportButton extends StatelessWidget {
               "Export".tl,
               style: TextStyle(
                 fontSize: 13,
-                color: context.colorScheme.primary,
+                color: context.colorScheme.tertiary,
               ),
             ),
           ),
@@ -625,6 +627,7 @@ class _ImportComicsWidgetState extends State<_ImportComicsWidget> {
       "Select a directory which contains multiple archive files.".tl,
       "Select an EhViewer database and a download folder.".tl,
       "Scan the current local path and restore the local database.".tl,
+      "Select a .venera_comics file to import comics with metadata and images.".tl,
     ][type];
     List<String> importMethods = [
       "Single Comic".tl,
@@ -633,6 +636,7 @@ class _ImportComicsWidgetState extends State<_ImportComicsWidget> {
       "Multiple archive files".tl,
       "EhViewer downloads".tl,
       "Restore local downloads".tl,
+      ".venera_comics file".tl,
     ];
 
     return ContentDialog(
@@ -649,7 +653,7 @@ class _ImportComicsWidgetState extends State<_ImportComicsWidget> {
               onChanged: (value) {
                 setState(() {
                   type = value ?? type;
-                  if (type == 5) {
+                  if (type == 5 || type == 6) {
                     selectedFolder = null;
                   }
                 });
@@ -665,7 +669,7 @@ class _ImportComicsWidgetState extends State<_ImportComicsWidget> {
                       value: index,
                     );
                   }),
-                  if (type != 4 && type != 5)
+                  if (type != 4 && type != 5 && type != 6)
                     ListTile(
                       title: Text("Add to favorites".tl),
                       trailing: Select(
@@ -683,7 +687,8 @@ class _ImportComicsWidgetState extends State<_ImportComicsWidget> {
                       !App.isMacOS &&
                       type != 2 &&
                       type != 3 &&
-                      type != 5)
+                      type != 5 &&
+                      type != 6)
                     CheckboxListTile(
                       enabled: true,
                       title: Text("Copy to app local path".tl),
@@ -744,6 +749,7 @@ class _ImportComicsWidgetState extends State<_ImportComicsWidget> {
       3 => await importer.multipleCbz(),
       4 => await importer.ehViewer(),
       5 => await importer.localDownloads(),
+      6 => await _importVeneraComics(),
       int() => true,
     };
     if (result) {
@@ -752,6 +758,20 @@ class _ImportComicsWidgetState extends State<_ImportComicsWidget> {
       setState(() {
         loading = false;
       });
+    }
+  }
+
+  Future<bool> _importVeneraComics() async {
+    var file = await selectFile(ext: ['venera_comics']);
+    if (file == null) return false;
+    try {
+      await importVeneraComics(File(file.path));
+      return true;
+    } catch (e) {
+      if (mounted) {
+        context.showMessage(message: e.toString());
+      }
+      return false;
     }
   }
 }
