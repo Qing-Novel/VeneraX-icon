@@ -215,6 +215,44 @@ Future<void> _replaceDatabaseFile(File newFile, String targetPath) async {
   newFile.renameSync(targetPath);
 }
 
+/// Returns true if [config] is a complete native WebDAV configuration:
+/// a 3-element list of non-empty strings ([url, user, password]).
+bool _isWebdavConfigComplete(dynamic config) {
+  if (config is! List || config.length != 3) {
+    return false;
+  }
+  if (config.whereType<String>().length != 3) {
+    return false;
+  }
+  return config.cast<String>().every((e) => e.trim().isNotEmpty);
+}
+
+/// Restores the WebDAV configuration from an imported backup, but only when the
+/// current device has no usable configuration.
+///
+/// WebDAV credentials are device-specific and therefore excluded from
+/// [Appdata.syncData], so a normal import never touches them. We make a
+/// deliberate exception here: if this device is unconfigured — or only
+/// partially configured (any of url/user/password blank) — and the backup
+/// carries a complete configuration, adopt it. A device that already has a
+/// complete configuration keeps its own.
+Future<void> _restoreWebdavConfigIfAbsent(Map<String, dynamic> data) async {
+  if (_isWebdavConfigComplete(appdata.settings['webdav'])) {
+    return;
+  }
+  var settings = data['settings'];
+  if (settings is! Map) {
+    return;
+  }
+  var incoming = settings['webdav'];
+  if (!_isWebdavConfigComplete(incoming)) {
+    return;
+  }
+  // Preserve values verbatim (e.g. don't trim the password).
+  appdata.settings['webdav'] = (incoming as List).cast<String>().toList();
+  await appdata.saveData(false);
+}
+
 Future<void> importAppData(File file, [bool checkVersion = false]) async {
   var cacheDirPath = FilePath.join(App.cachePath, 'temp_data');
   var cacheDir = Directory(cacheDirPath);
@@ -274,6 +312,9 @@ Future<void> importAppData(File file, [bool checkVersion = false]) async {
       var content = await appdataFile.readAsString();
       var data = jsonDecode(content);
       appdata.syncData(data);
+      if (data is Map<String, dynamic>) {
+        await _restoreWebdavConfigIfAbsent(data);
+      }
     }
     if (await implicitDataFile.exists()) {
       try {
