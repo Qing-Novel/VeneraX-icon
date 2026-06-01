@@ -1422,6 +1422,7 @@ class _SliverGridComicsState extends State<SliverGridComics> {
     generateHeroID();
     HistoryManager().addListener(update);
     LocalFavoritesManager().addListener(update);
+    ReadLaterManager().addListener(update);
     super.initState();
   }
 
@@ -1429,6 +1430,7 @@ class _SliverGridComicsState extends State<SliverGridComics> {
   void dispose() {
     HistoryManager().removeListener(update);
     LocalFavoritesManager().removeListener(update);
+    ReadLaterManager().removeListener(update);
     super.dispose();
   }
 

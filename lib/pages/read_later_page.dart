@@ -31,6 +31,7 @@ class _ReadLaterPageState extends State<ReadLaterPage> {
   }
 
   void onUpdate() {
+    if (!mounted) return;
     setState(() {
       comics = ReadLaterManager().getAll();
       if (multiSelectMode) {
@@ -115,9 +116,7 @@ class _ReadLaterPageState extends State<ReadLaterPage> {
             message: "Deleted @c items".tlParams({"c": removed.length}),
             trailing: TextButton(
               onPressed: () {
-                for (final item in removed) {
-                  ReadLaterManager().addItem(item);
-                }
+                ReadLaterManager().addMultiple(removed);
               },
               child: Text("Undo".tl),
             ),

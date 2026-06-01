@@ -89,6 +89,15 @@ class ReadLaterItem implements Comic {
         "tags": tags,
         "time": time.millisecondsSinceEpoch,
       };
+
+  @override
+  bool operator ==(Object other) =>
+      other is ReadLaterItem &&
+      other.id == id &&
+      other.type.value == type.value;
+
+  @override
+  int get hashCode => Object.hash(id, type.value);
 }
 
 class ReadLaterManager with ChangeNotifier {
@@ -135,7 +144,6 @@ class ReadLaterManager with ChangeNotifier {
 
   void _loadIds() {
     _ids.clear();
-    if (kIsWeb) return;
     try {
       final rows = _db.select("select id, type from read_later;");
       for (final row in rows) {
@@ -225,6 +233,45 @@ class ReadLaterManager with ChangeNotifier {
     _ids.add(_key(item.id, item.type));
     _trackServerWrite(_upsertServer(item));
     notifyListeners();
+  }
+
+  /// Add multiple pre-built entries in a single transaction.
+  Future<void> addMultiple(List<ReadLaterItem> items) async {
+    if (!isInitialized || items.isEmpty) return;
+    _db.execute("BEGIN TRANSACTION;");
+    try {
+      for (final item in items) {
+        _db.execute(_insertSql, _sqlArgs(item));
+        _ids.add(_key(item.id, item.type));
+      }
+      _db.execute("COMMIT;");
+    } catch (e) {
+      _db.execute("ROLLBACK;");
+      rethrow;
+    }
+    for (final item in items) {
+      _trackServerWrite(_upsertServer(item));
+    }
+    notifyListeners();
+  }
+
+  /// Add multiple comics, building entries from any [Comic].
+  Future<void> addComics(List<Comic> comics) async {
+    if (!isInitialized || comics.isEmpty) return;
+    final now = DateTime.now();
+    final items = comics.map((comic) {
+      final type = ComicType.fromKey(comic.sourceKey);
+      return ReadLaterItem(
+        id: comic.id,
+        title: comic.title,
+        subtitle: comic.subtitle,
+        cover: comic.cover,
+        type: type,
+        tags: comic.tags ?? const [],
+        time: now,
+      );
+    }).toList();
+    await addMultiple(items);
   }
 
   Future<void> remove(String id, ComicType type) async {

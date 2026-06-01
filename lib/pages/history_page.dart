@@ -374,9 +374,7 @@ class _HistoryPageState extends State<HistoryPage> {
             onClick: () async {
               if (selectedComics.isEmpty) return;
               final picked = List<History>.from(selectedComics.keys);
-              for (final comic in picked) {
-                await ReadLaterManager().add(comic);
-              }
+              await ReadLaterManager().addComics(picked);
               setState(() {
                 multiSelectMode = false;
                 selectedComics.clear();
