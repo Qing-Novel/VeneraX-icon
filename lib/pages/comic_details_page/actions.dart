@@ -82,7 +82,7 @@ abstract mixin class _ComicPageActions {
 
   void quickFavorite() {
     var folder = appdata.settings['quickFavorite'];
-    if (folder is! String) {
+    if (folder is! String || !LocalFavoritesManager().existsFolder(folder)) {
       return;
     }
     LocalFavoritesManager().addComic(

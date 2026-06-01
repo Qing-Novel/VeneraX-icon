@@ -5,6 +5,7 @@ import 'package:venera/foundation/comic_source/comic_source.dart';
 import 'package:venera/foundation/comic_type.dart';
 import 'package:venera/foundation/history.dart';
 import 'package:venera/foundation/history_tasks.dart';
+import 'package:venera/pages/favorites/favorites_page.dart';
 import 'package:venera/utils/server_db.dart';
 import 'package:venera/utils/translations.dart';
 
@@ -355,6 +356,18 @@ class _HistoryPageState extends State<HistoryPage> {
             : () => _removeHistoriesWithConfirm(
                 List<History>.from(selectedComics.keys),
               ),
+      ),
+      MenuButton(
+        entries: [
+          MenuEntry(
+            icon: Icons.favorite_border,
+            text: "Add to favorites".tl,
+            onClick: () {
+              if (selectedComics.isEmpty) return;
+              addFavorite(List<History>.from(selectedComics.keys));
+            },
+          ),
+        ],
       ),
     ];
 

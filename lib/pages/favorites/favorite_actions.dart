@@ -84,6 +84,11 @@ void addFavorite(List<Comic> comics) {
     context: App.rootContext,
     builder: (context) {
       String? selectedFolder = appdata.settings['quickFavorite'];
+      // 快速收藏未设置或指向已失效(被删除/改名)的文件夹时,
+      // 回退到第一个可用文件夹,避免下拉显示无效旧值或确认时收藏失败。
+      if (selectedFolder == null || !folders.contains(selectedFolder)) {
+        selectedFolder = folders.isNotEmpty ? folders.first : null;
+      }
 
       return StatefulBuilder(builder: (context, setState) {
         return ContentDialog(
@@ -105,8 +110,9 @@ void addFavorite(List<Comic> comics) {
             FilledButton(
               onPressed: () {
                 if (selectedFolder != null) {
+                  var added = 0;
                   for (var comic in comics) {
-                    LocalFavoritesManager().addComic(
+                    var ok = LocalFavoritesManager().addComic(
                       selectedFolder!,
                       FavoriteItem(
                         id: comic.id,
@@ -117,8 +123,17 @@ void addFavorite(List<Comic> comics) {
                         tags: comic.tags ?? [],
                       ),
                     );
+                    if (ok) added++;
                   }
                   context.pop();
+                  App.rootContext.showMessage(
+                    message: added == 0
+                        ? "Already in favorites".tl
+                        : added == comics.length
+                            ? "Added to favorites".tl
+                            : "Added @c comics to favorites"
+                                .tlParams({"c": added}),
+                  );
                 }
               },
               child: Text("Confirm".tl),
