@@ -61,6 +61,8 @@ data.venera
 CLAUDE.md
 .playwright-cli/
 .codegraph/
+.superpowers/
+venera-sign-v2.0.2/
 
 # Web server user data
 web/server/.venera-helper-data/
