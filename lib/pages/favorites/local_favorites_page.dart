@@ -539,61 +539,6 @@ class _LocalFavoritesPageState extends State<_LocalFavoritesPage> {
               child: Text(title),
             ),
             actions: [
-              if (networkSource != null && !isAllFolder)
-                Tooltip(
-                  message: "Sync".tl,
-                  child: Flyout(
-                    flyoutBuilder: (context) {
-                      final GlobalKey<_SelectUpdatePageNumState>
-                      selectUpdatePageNumKey =
-                          GlobalKey<_SelectUpdatePageNumState>();
-                      var updatePageWidget = _SelectUpdatePageNum(
-                        networkSource: networkSource!,
-                        networkFolder: networkFolder,
-                        key: selectUpdatePageNumKey,
-                      );
-                      return FlyoutContent(
-                        title: "Sync".tl,
-                        content: updatePageWidget,
-                        actions: [
-                          Button.filled(
-                            child: Text("Update".tl),
-                            onPressed: () {
-                              context.pop();
-                              importNetworkFolder(
-                                networkSource!,
-                                selectUpdatePageNumKey
-                                    .currentState!
-                                    .updatePageNum,
-                                widget.folder,
-                                networkFolder!,
-                              ).then((value) {
-                                updateComics();
-                              });
-                            },
-                          ),
-                        ],
-                      );
-                    },
-                    child: Builder(
-                      builder: (context) {
-                        return IconButton(
-                          icon: const Icon(Icons.sync),
-                          onPressed: () {
-                            Flyout.of(context).show();
-                          },
-                        );
-                      },
-                    ),
-                  ),
-                ),
-              Tooltip(
-                message: "Auto link comic sources".tl,
-                child: IconButton(
-                  icon: const Icon(Icons.hub_outlined),
-                  onPressed: _showAutoLinkSourcesDialog,
-                ),
-              ),
               Tooltip(
                 message: "Sort".tl,
                 child: IconButton(
@@ -668,9 +613,20 @@ class _LocalFavoritesPageState extends State<_LocalFavoritesPage> {
                   },
                 ),
               ),
-              if (!isAllFolder)
-                MenuButton(
-                  entries: [
+              MenuButton(
+                entries: [
+                  if (networkSource != null && !isAllFolder)
+                    MenuEntry(
+                      icon: Icons.sync,
+                      text: "Sync".tl,
+                      onClick: _showSyncDialog,
+                    ),
+                  MenuEntry(
+                    icon: Icons.hub_outlined,
+                    text: "Auto link comic sources".tl,
+                    onClick: _showAutoLinkSourcesDialog,
+                  ),
+                  if (!isAllFolder)
                     MenuEntry(
                       icon: Icons.edit_outlined,
                       text: "Rename".tl,
@@ -695,6 +651,7 @@ class _LocalFavoritesPageState extends State<_LocalFavoritesPage> {
                         );
                       },
                     ),
+                  if (!isAllFolder)
                     MenuEntry(
                       icon: Icons.reorder,
                       text: "Reorder".tl,
@@ -714,6 +671,7 @@ class _LocalFavoritesPageState extends State<_LocalFavoritesPage> {
                             });
                       },
                     ),
+                  if (!isAllFolder)
                     MenuEntry(
                       icon: Icons.upload_file,
                       text: "Export".tl,
@@ -727,6 +685,7 @@ class _LocalFavoritesPageState extends State<_LocalFavoritesPage> {
                         );
                       },
                     ),
+                  if (!isAllFolder)
                     MenuEntry(
                       icon: Icons.update,
                       text: "Update Comics Info".tl,
@@ -740,6 +699,7 @@ class _LocalFavoritesPageState extends State<_LocalFavoritesPage> {
                         });
                       },
                     ),
+                  if (!isAllFolder)
                     MenuEntry(
                       icon: Icons.delete_outline,
                       text: "Delete Folder".tl,
@@ -760,8 +720,8 @@ class _LocalFavoritesPageState extends State<_LocalFavoritesPage> {
                         );
                       },
                     ),
-                  ],
-                ),
+                ],
+              ),
             ],
           )
         else if (multiSelectMode)
@@ -1108,6 +1068,40 @@ class _LocalFavoritesPageState extends State<_LocalFavoritesPage> {
         }
       },
       child: body,
+    );
+  }
+
+  void _showSyncDialog() {
+    if (networkSource == null) return;
+    final selectUpdatePageNumKey = GlobalKey<_SelectUpdatePageNumState>();
+    showDialog(
+      context: context,
+      builder: (context) {
+        return ContentDialog(
+          title: "Sync".tl,
+          content: _SelectUpdatePageNum(
+            networkSource: networkSource!,
+            networkFolder: networkFolder,
+            key: selectUpdatePageNumKey,
+          ).paddingHorizontal(4),
+          actions: [
+            Button.filled(
+              child: Text("Update".tl),
+              onPressed: () {
+                context.pop();
+                importNetworkFolder(
+                  networkSource!,
+                  selectUpdatePageNumKey.currentState!.updatePageNum,
+                  widget.folder,
+                  networkFolder!,
+                ).then((value) {
+                  updateComics();
+                });
+              },
+            ),
+          ],
+        );
+      },
     );
   }
 
