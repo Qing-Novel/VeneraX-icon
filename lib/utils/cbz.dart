@@ -7,12 +7,20 @@ import 'package:venera/foundation/local.dart';
 import 'package:venera/utils/ext.dart';
 import 'package:venera/utils/file_type.dart';
 import 'package:venera/utils/io.dart';
+import 'package:venera/utils/comic_metadata_resolver.dart';
 import 'package:zip_flutter/zip_flutter.dart';
 
 class ComicMetaData {
   final String title;
 
   final String author;
+
+  final String artist;
+
+  final String description;
+
+  /// mihon status: "" / "0".."6" 或 ComicInfo 原文
+  final String status;
 
   final List<String> tags;
 
@@ -21,14 +29,20 @@ class ComicMetaData {
   Map<String, dynamic> toJson() => {
         'title': title,
         'author': author,
+        'artist': artist,
+        'description': description,
+        'status': status,
         'tags': tags,
         'chapters': chapters?.map((e) => e.toJson()).toList()
       };
 
   ComicMetaData.fromJson(Map<String, dynamic> json)
-      : title = json['title'],
-        author = json['author'],
-        tags = List<String>.from(json['tags']),
+      : title = json['title'] ?? '',
+        author = json['author'] ?? '',
+        artist = json['artist'] ?? '',
+        description = json['description'] ?? '',
+        status = json['status'] ?? '',
+        tags = List<String>.from(json['tags'] ?? const []),
         chapters = json['chapters'] == null
             ? null
             : List<ComicChapter>.from(
@@ -38,6 +52,9 @@ class ComicMetaData {
     required this.title,
     required this.author,
     required this.tags,
+    this.artist = '',
+    this.description = '',
+    this.status = '',
     this.chapters,
   });
 }
@@ -90,14 +107,7 @@ abstract class CBZ {
     if (f.length == 1 && f.first is Directory) {
       cache = f.first as Directory;
     }
-    var metaDataFile = File(FilePath.join(cache.path, 'metadata.json'));
-    ComicMetaData? metaData;
-    if (metaDataFile.existsSync()) {
-      try {
-        metaData =
-            ComicMetaData.fromJson(jsonDecode(metaDataFile.readAsStringSync()));
-      } catch (_) {}
-    }
+    var metaData = resolveMetadataOrNull(cache);
     metaData ??= ComicMetaData(
       title: file.name.substring(0, file.name.lastIndexOf('.')),
       author: "",
@@ -172,7 +182,7 @@ abstract class CBZ {
     var comic = LocalComic(
       id: LocalManager().findValidId(ComicType.local),
       title: metaData.title,
-      subtitle: metaData.author,
+      subtitle: metaData.author.isNotEmpty ? metaData.author : metaData.artist,
       tags: metaData.tags,
       comicType: ComicType.local,
       directory: dest.name,
@@ -180,6 +190,7 @@ abstract class CBZ {
       downloadedChapters: cpMap?.keys.toList() ?? [],
       cover: 'cover.${coverFile.extension}',
       createdAt: DateTime.now(),
+      description: metaData.description,
     );
     await cache.delete(recursive: true);
     return comic;
@@ -234,11 +245,17 @@ abstract class CBZ {
     var cover = comic.coverFile;
     await cover.copyMem(
         FilePath.join(cache.path, 'cover.${cover.path.split('.').last}'));
+    final statusTag = comic.tags.firstWhere(
+      (t) => t.startsWith('Status:'),
+      orElse: () => '',
+    );
     final metaData = ComicMetaData(
       title: comic.title,
       author: comic.subtitle,
       tags: comic.tags,
       chapters: chapters,
+      description: comic.description,
+      status: statusTag.isEmpty ? '' : statusTag.substring('Status:'.length),
     );
     await File(FilePath.join(cache.path, 'metadata.json')).writeAsString(
       jsonEncode(metaData),
@@ -263,6 +280,18 @@ abstract class CBZ {
 
     if (data.author.isNotEmpty) {
       buffer.writeln('  <Writer>${_escapeXml(data.author)}</Writer>');
+    }
+
+    if (data.artist.isNotEmpty) {
+      buffer.writeln('  <Penciller>${_escapeXml(data.artist)}</Penciller>');
+    }
+
+    if (data.description.isNotEmpty) {
+      buffer.writeln('  <Summary>${_escapeXml(data.description)}</Summary>');
+    }
+
+    if (data.status.isNotEmpty) {
+      buffer.writeln('  <Status>${_escapeXml(data.status)}</Status>');
     }
 
     if (data.tags.isNotEmpty) {

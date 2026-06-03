@@ -12,7 +12,9 @@ import 'package:sqlite3/sqlite3.dart' as sql;
 import 'package:venera/utils/ext.dart';
 import 'package:venera/utils/translations.dart';
 import 'cbz.dart';
+import 'comic_metadata_resolver.dart';
 import 'io.dart';
+import 'venera_comics.dart';
 
 class ImportComic {
   final String? selectedFolder;
@@ -22,13 +24,17 @@ class ImportComic {
 
   Future<bool> cbz() async {
     var file = await selectFile(ext: ['cbz', 'zip', '7z', 'cb7']);
-    Map<String?, List<LocalComic>> imported = {};
     if (file == null) {
       return false;
     }
+    return cbzFile(File(file.path));
+  }
+
+  Future<bool> cbzFile(File file) async {
+    Map<String?, List<LocalComic>> imported = {};
     var controller = showLoadingDialog(App.rootContext, allowCancel: false);
     try {
-      var comic = await CBZ.import(File(file.path));
+      var comic = await CBZ.import(file);
       imported[selectedFolder] = [comic];
     } catch (e, s) {
       Log.error("Import Comic", e.toString(), s);
@@ -38,32 +44,55 @@ class ImportComic {
     return registerComics(imported, false);
   }
 
+  /// 导入文件:单选,按扩展名路由到 CBZ 或 venera_comics。
+  Future<bool> files() async {
+    var file = await selectFile(
+      ext: ['cbz', 'zip', '7z', 'cb7', 'venera_comics'],
+    );
+    if (file == null) return false;
+    final ext = file.path.split('.').last.toLowerCase();
+    if (ext == 'venera_comics') {
+      try {
+        await importVeneraComics(File(file.path));
+        return true;
+      } catch (e) {
+        App.rootContext.showMessage(message: e.toString());
+        return false;
+      }
+    }
+    return cbzFile(File(file.path));
+  }
+
   Future<bool> multipleCbz() async {
     var picker = DirectoryPicker();
     var dir = await picker.pickDirectory(directAccess: true);
-    if (dir != null) {
-      var files = (await dir.list().toList()).whereType<File>().toList();
-      const supportedExtensions = ['cbz', 'zip', '7z', 'cb7'];
-      files.removeWhere((e) => !supportedExtensions.contains(e.extension));
-      Map<String?, List<LocalComic>> imported = {};
-      var controller = showLoadingDialog(App.rootContext, allowCancel: false);
-      var comics = <LocalComic>[];
-      for (var file in files) {
-        try {
-          var comic = await CBZ.import(file);
-          comics.add(comic);
-        } catch (e, s) {
-          Log.error("Import Comic", e.toString(), s);
-        }
-      }
-      if (comics.isEmpty) {
-        App.rootContext.showMessage(message: "No valid comics found".tl);
-      }
-      imported[selectedFolder] = comics;
-      controller.close();
-      return registerComics(imported, false);
+    if (dir == null) {
+      return false;
     }
-    return false;
+    return multipleCbzFromDir(dir);
+  }
+
+  Future<bool> multipleCbzFromDir(Directory dir) async {
+    var files = (await dir.list().toList()).whereType<File>().toList();
+    const supportedExtensions = ['cbz', 'zip', '7z', 'cb7'];
+    files.removeWhere((e) => !supportedExtensions.contains(e.extension));
+    Map<String?, List<LocalComic>> imported = {};
+    var controller = showLoadingDialog(App.rootContext, allowCancel: false);
+    var comics = <LocalComic>[];
+    for (var file in files) {
+      try {
+        var comic = await CBZ.import(file);
+        comics.add(comic);
+      } catch (e, s) {
+        Log.error("Import Comic", e.toString(), s);
+      }
+    }
+    if (comics.isEmpty) {
+      App.rootContext.showMessage(message: "No valid comics found".tl);
+    }
+    imported[selectedFolder] = comics;
+    controller.close();
+    return registerComics(imported, false);
   }
 
   Future<bool> ehViewer() async {
@@ -171,6 +200,10 @@ class ImportComic {
     if (path == null) {
       return false;
     }
+    return directoryAt(path, single: single);
+  }
+
+  Future<bool> directoryAt(Directory path, {required bool single}) async {
     Map<String?, List<LocalComic>> imported = {selectedFolder: []};
     try {
       if (single) {
@@ -196,6 +229,42 @@ class ImportComic {
       App.rootContext.showMessage(message: e.toString());
     }
     return registerComics(imported, copyToLocal);
+  }
+
+  /// 文件夹自动判定:返回 kind('cbz'|'single'|'multi')、guessMulti、选中的 dir。
+  Future<({String kind, bool guessMulti, Directory dir})?> inspectFolder() async {
+    final picker = DirectoryPicker();
+    final path = await picker.pickDirectory();
+    if (path == null) return null;
+
+    var hasArchive = false;
+    var hasSubDir = false;
+    var hasImageInRoot = false;
+    var hasMetaInRoot = false;
+    const imgExt = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'jpe'];
+    const metaFiles = ['details.json', 'comicinfo.xml', 'metadata.json'];
+    const arcExt = ['cbz', 'zip', '7z', 'cb7'];
+
+    await for (var e in path.list()) {
+      final name = e.name.toLowerCase();
+      if (e is Directory) {
+        hasSubDir = true;
+      } else if (e is File) {
+        final ext = name.split('.').last;
+        if (arcExt.contains(ext)) hasArchive = true;
+        if (imgExt.contains(ext)) hasImageInRoot = true;
+        if (metaFiles.contains(name)) hasMetaInRoot = true;
+      }
+    }
+
+    if (hasArchive) return (kind: 'cbz', guessMulti: false, dir: path);
+    if (!hasSubDir && hasImageInRoot) {
+      return (kind: 'single', guessMulti: false, dir: path);
+    }
+    // 含子文件夹:根目录有元数据文件或封面图 → 倾向单本(子文件夹为章节);
+    // 否则倾向多本(每个子文件夹一本)。用户可在确认弹窗中改正。
+    final guessMulti = !(hasMetaInRoot || hasImageInRoot);
+    return (kind: guessMulti ? 'multi' : 'single', guessMulti: guessMulti, dir: path);
   }
 
   Future<bool> localDownloads() async {
@@ -300,11 +369,17 @@ class ImportComic {
       return null;
     }
     var directoryPath = useRelativePath ? directory.name : directory.path;
+    // 调用方未显式传入元数据时，尝试从目录内 details.json/ComicInfo.xml/metadata.json 解析
+    final meta = resolveMetadata(directory);
+    final resolvedSubtitle = (subtitle != null && subtitle.isNotEmpty)
+        ? subtitle
+        : (meta.author.isNotEmpty ? meta.author : meta.artist);
+    final resolvedTags = (tags != null && tags.isNotEmpty) ? tags : meta.tags;
     return LocalComic(
       id: id ?? '0',
       title: name,
-      subtitle: subtitle ?? '',
-      tags: tags ?? [],
+      subtitle: resolvedSubtitle,
+      tags: resolvedTags,
       directory: directoryPath,
       chapters: hasChapters
           ? ComicChapters(Map.fromIterables(chapters, chapters))
@@ -313,6 +388,7 @@ class ImportComic {
       comicType: ComicType.local,
       downloadedChapters: chapters,
       createdAt: createTime ?? DateTime.now(),
+      description: meta.description,
     );
   }
 
@@ -377,6 +453,7 @@ class ImportComic {
             comicType: c.comicType,
             downloadedChapters: c.downloadedChapters,
             createdAt: c.createdAt,
+            description: c.description,
           ));
         }
       } catch (e, s) {
