@@ -168,23 +168,8 @@ class _ReaderSettingsState extends State<ReaderSettings> {
           childrenPadding: const EdgeInsets.only(bottom: 8),
           title: Text("Reading settings".tl),
           children: [
-            _SwitchSetting(
-              title: "Tap to turn Pages".tl,
-              settingKey: "enableTapToTurnPages",
-              onChanged: () {
-                widget.onChanged?.call("enableTapToTurnPages");
-              },
-              comicId: isEnabledSpecificSettings ? widget.comicId : null,
-              comicSource:
-                  isEnabledSpecificSettings ? widget.comicSource : null,
-              useDeviceSettings: useDeviceSpecificSettings,
-            ),
-            _SwitchSetting(
-              title: "Reverse tap to turn Pages".tl,
-              settingKey: "reverseTapToTurnPages",
-              onChanged: () {
-                widget.onChanged?.call("reverseTapToTurnPages");
-              },
+            _PageTurnModeSetting(
+              onChanged: widget.onChanged,
               comicId: isEnabledSpecificSettings ? widget.comicId : null,
               comicSource:
                   isEnabledSpecificSettings ? widget.comicSource : null,
@@ -304,6 +289,25 @@ class _ReaderSettingsState extends State<ReaderSettings> {
                     isEnabledSpecificSettings ? widget.comicSource : null,
                 useDeviceSettings: useDeviceSpecificSettings,
               ),
+            SelectSetting(
+              title: "Reading background color".tl,
+              settingKey: "readerBackgroundColor",
+              optionTranslation: {
+                "system": "Follow theme".tl,
+                "white": "White".tl,
+                "gray": "Gray".tl,
+                "black": "Black".tl,
+                "sepia": "Sepia".tl,
+                "green": "Eye-care green".tl,
+              },
+              onChanged: () {
+                widget.onChanged?.call("readerBackgroundColor");
+              },
+              comicId: isEnabledSpecificSettings ? widget.comicId : null,
+              comicSource:
+                  isEnabledSpecificSettings ? widget.comicSource : null,
+              useDeviceSettings: useDeviceSpecificSettings,
+            ),
             _SwitchSetting(
               title: 'Double tap to zoom'.tl,
               settingKey: 'enableDoubleTapToZoom',
@@ -352,6 +356,40 @@ class _ReaderSettingsState extends State<ReaderSettings> {
                 comicSource:
                     isEnabledSpecificSettings ? widget.comicSource : null,
                 useDeviceSettings: useDeviceSpecificSettings,
+              ),
+            _SwitchSetting(
+              title: "Night mode".tl,
+              subtitle: "Dim the page with a warm overlay to reduce eye strain"
+                  .tl,
+              settingKey: "readerNightMode",
+              onChanged: () {
+                setState(() {});
+                widget.onChanged?.call("readerNightMode");
+              },
+            ),
+            if (appdata.settings['readerNightMode'] == true)
+              SelectSetting(
+                title: "Night mode color".tl,
+                settingKey: "readerNightModeColor",
+                optionTranslation: {
+                  "warm": "Warm".tl,
+                  "black": "Black".tl,
+                  "red": "Dim red".tl,
+                },
+                onChanged: () {
+                  widget.onChanged?.call("readerNightModeColor");
+                },
+              ),
+            if (appdata.settings['readerNightMode'] == true)
+              _SliderSetting(
+                title: "Night mode intensity".tl,
+                settingsIndex: "readerNightModeIntensity",
+                interval: 0.05,
+                min: 0.1,
+                max: 0.85,
+                onChanged: () {
+                  widget.onChanged?.call("readerNightModeIntensity");
+                },
               ),
             _SliderSetting(
               title: "Auto page turning interval".tl,

@@ -73,6 +73,100 @@ class _SwitchSettingState extends State<_SwitchSetting> {
   }
 }
 
+class _PageTurnModeSetting extends StatefulWidget {
+  const _PageTurnModeSetting({
+    this.onChanged,
+    this.comicId,
+    this.comicSource,
+    this.useDeviceSettings = false,
+  });
+
+  final void Function(String key)? onChanged;
+
+  final String? comicId;
+
+  final String? comicSource;
+
+  final bool useDeviceSettings;
+
+  @override
+  State<_PageTurnModeSetting> createState() => _PageTurnModeSettingState();
+}
+
+class _PageTurnModeSettingState extends State<_PageTurnModeSetting> {
+  dynamic _read(String key) {
+    if (widget.comicId != null) {
+      return appdata.settings.getReaderSetting(
+        widget.comicId!,
+        widget.comicSource!,
+        key,
+      );
+    } else if (widget.useDeviceSettings) {
+      return appdata.settings.getDeviceReaderSetting(key);
+    } else {
+      return appdata.settings[key];
+    }
+  }
+
+  void _write(String key, dynamic value) {
+    if (widget.comicId != null) {
+      appdata.settings.setReaderSetting(
+        widget.comicId!,
+        widget.comicSource!,
+        key,
+        value,
+      );
+    } else if (widget.useDeviceSettings) {
+      appdata.settings.setDeviceReaderSetting(key, value);
+    } else {
+      appdata.settings[key] = value;
+    }
+  }
+  @override
+  Widget build(BuildContext context) {
+    final enabled = _read('enableTapToTurnPages') == true;
+    final reverse = _read('reverseTapToTurnPages') == true;
+    final current = !enabled
+        ? 'off'
+        : reverse
+            ? 'reverse'
+            : 'normal';
+    final options = {
+      'off': "Off".tl,
+      'normal': "Tap to turn Pages".tl,
+      'reverse': "Reverse tap to turn Pages".tl,
+    };
+
+    void apply(String mode) {
+      switch (mode) {
+        case 'off':
+          _write('enableTapToTurnPages', false);
+        case 'normal':
+          _write('enableTapToTurnPages', true);
+          _write('reverseTapToTurnPages', false);
+        case 'reverse':
+          _write('enableTapToTurnPages', true);
+          _write('reverseTapToTurnPages', true);
+      }
+      setState(() {});
+      appdata.saveData().then((_) {
+        widget.onChanged?.call('enableTapToTurnPages');
+        widget.onChanged?.call('reverseTapToTurnPages');
+      });
+    }
+
+    return ListTile(
+      title: Text("Page turn mode".tl),
+      trailing: Select(
+        current: options[current],
+        values: options.values.toList(),
+        minWidth: 64,
+        onTap: (index) => apply(options.keys.elementAt(index)),
+      ),
+    );
+  }
+}
+
 class SelectSetting extends StatelessWidget {
   const SelectSetting({
     super.key,

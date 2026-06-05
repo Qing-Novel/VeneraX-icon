@@ -333,7 +333,7 @@ class _GalleryModeState extends State<_GalleryMode>
         }
       },
       child: PhotoViewGallery.builder(
-        backgroundDecoration: BoxDecoration(color: context.colorScheme.surface),
+        backgroundDecoration: BoxDecoration(color: reader.readerBackgroundColor),
         reverse: reader.mode == ReaderMode.galleryRightToLeft,
         scrollDirection: reader.mode == ReaderMode.galleryTopToBottom
             ? Axis.vertical
@@ -401,7 +401,7 @@ class _GalleryModeState extends State<_GalleryMode>
             minScale: PhotoViewComputedScale.contained * 1.0,
             maxScale: PhotoViewComputedScale.covered * 10.0,
             backgroundDecoration: BoxDecoration(
-              color: context.colorScheme.surface,
+              color: reader.readerBackgroundColor,
             ),
             child: Center(
               child: SizedBox(
@@ -1305,7 +1305,7 @@ class _ContinuousModeState extends State<_ContinuousMode>
         ? 'Loading'.tl
         : null;
     return ColoredBox(
-      color: context.colorScheme.surface,
+      color: reader.readerBackgroundColor,
       child: SizedBox(
         width: reader.size.width,
         height: reader.size.height,
@@ -1384,7 +1384,7 @@ class _ContinuousModeState extends State<_ContinuousMode>
     return KeyedSubtree(
       key: _itemKeyFor(entry.chapter, entry.page),
       child: ColoredBox(
-        color: context.colorScheme.surface,
+        color: reader.readerBackgroundColor,
         child: ComicImage(
           filterQuality: FilterQuality.medium,
           image: image,
@@ -1624,7 +1624,7 @@ class _ContinuousModeState extends State<_ContinuousMode>
     }
 
     return PhotoView.customChild(
-      backgroundDecoration: BoxDecoration(color: context.colorScheme.surface),
+      backgroundDecoration: BoxDecoration(color: reader.readerBackgroundColor),
       childSize: Size(width, height),
       minScale: 1.0,
       maxScale: 2.5,

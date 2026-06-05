@@ -417,6 +417,30 @@ class _ReaderState extends State<Reader>
     var renderBox = context.findRenderObject() as RenderBox;
     return renderBox.size;
   }
+
+  /// Reading area background color, independent of the app theme.
+  /// `system` keeps following the theme surface color (default behavior).
+  Color get readerBackgroundColor {
+    var value = appdata.settings.getReaderSetting(
+      cid,
+      type.sourceKey,
+      'readerBackgroundColor',
+    );
+    switch (value) {
+      case 'white':
+        return Colors.white;
+      case 'gray':
+        return const Color(0xFFBDBDBD);
+      case 'black':
+        return Colors.black;
+      case 'sepia':
+        return const Color(0xFFE8DCC0);
+      case 'green':
+        return const Color(0xFFC7E6C7);
+      default:
+        return context.colorScheme.surface;
+    }
+  }
 }
 
 abstract mixin class _ImagePerPageHandler {

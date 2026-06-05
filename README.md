@@ -32,7 +32,8 @@ A cross-platform manga/comic reader with self-hosted Web frontend support.
 - [x] Improved local library, follow-updates & favorites
 - [x] Task system with background execution and related views
 - [x] Chapter read-status changes
-- [ ] Night-view mode
+- [x] Reading background color (per-comic)
+- [x] Night-view mode (warm/black/dim-red overlay, adjustable intensity)
 
 ## Quick Start
 

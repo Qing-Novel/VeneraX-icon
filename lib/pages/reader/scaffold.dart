@@ -126,6 +126,19 @@ class _ReaderScaffoldState extends State<_ReaderScaffold> {
     setState(() {});
   }
 
+  /// Night mode overlay tint, selected by `readerNightModeColor` setting.
+  Color _nightModeColor() {
+    switch (appdata.settings['readerNightModeColor']) {
+      case 'black':
+        return const Color(0xFF000000);
+      case 'red':
+        return const Color(0xFF3A0000);
+      case 'warm':
+      default:
+        return const Color(0xFF2A1800);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isOnChapterCommentsPage = context.reader.isOnChapterCommentsPage;
@@ -137,6 +150,19 @@ class _ReaderScaffoldState extends State<_ReaderScaffold> {
             child: widget.child,
           ),
         ),
+        if (appdata.settings['readerNightMode'] == true)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: ColoredBox(
+                color: _nightModeColor().toOpacity(
+                  ((appdata.settings['readerNightModeIntensity'] as num?)
+                              ?.toDouble() ??
+                          0.45)
+                      .clamp(0.1, 0.85),
+                ),
+              ),
+            ),
+          ),
         if (appdata.settings['showPageNumberInReader'] == true &&
             !isOnChapterCommentsPage)
           buildPageInfoText(),
@@ -413,6 +439,23 @@ class _ReaderScaffoldState extends State<_ReaderScaffold> {
     }
 
     final buttons = [
+      Tooltip(
+        message: "Night mode".tl,
+        child: IconButton(
+          icon: Icon(
+            appdata.settings['readerNightMode'] == true
+                ? Icons.nightlight_round
+                : Icons.nightlight_outlined,
+          ),
+          onPressed: () {
+            appdata.settings['readerNightMode'] =
+                !(appdata.settings['readerNightMode'] == true);
+            appdata.saveData();
+            context.reader.update();
+            update();
+          },
+        ),
+      ),
       Tooltip(
         message: "Collect the image".tl,
         child: IconButton(

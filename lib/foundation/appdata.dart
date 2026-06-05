@@ -324,6 +324,11 @@ class Settings with ChangeNotifier {
         false, // show chapter comments at end of chapter
     'galleryFillScreen':
         false, // when true, gallery mode uses BoxFit.cover instead of contain
+    'readerBackgroundColor':
+        'system', // system, white, gray, black, sepia, green
+    'readerNightMode': false, // warm dimming overlay for night reading
+    'readerNightModeColor': 'warm', // overlay tint: warm, black, red
+    'readerNightModeIntensity': 0.45, // overlay opacity, 0.1 - 0.85
     'enableReaderImageEnhance': false, // GPU render-time image sharpening in reader
     'readerImageEnhanceStrength': 0.5, // unsharp mask strength
     'readerImageEnhanceClarity': 0.0, // 0.0 - 1.0 mid-radius local contrast
