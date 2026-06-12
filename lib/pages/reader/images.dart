@@ -276,6 +276,12 @@ class _GalleryModeState extends State<_GalleryMode>
   }
 
   void cache(int startPage) {
+    // 向前"解码"预取的页数（不含仅下载）。只有解码进内存的页在滑入视口时
+    // 才是现成纹理、不会临场解码掉帧；但 gallery 图为支持 pinch-zoom 保留全
+    // 分辨率，解码占内存较大，故解码窗口远小于下载窗口 [preCacheCount] 并封顶
+    // 到 2。向后保留 1 页（返回上一页时同样流畅）。超出解码窗口的页仍只下载，
+    // 由 [_cachePage] 走 _preDownloadImage。
+    final decodeAhead = preCacheCount.clamp(1, 2);
     for (int i = startPage - 1; i <= startPage + preCacheCount; i++) {
       if (i == startPage ||
           i <= 0 ||
@@ -283,7 +289,9 @@ class _GalleryModeState extends State<_GalleryMode>
           isChapterCommentsPage(i)) {
         continue;
       }
-      _cachePage(i, i == startPage + 1 || i == startPage - 1);
+      final shouldPreCache =
+          i == startPage - 1 || (i > startPage && i <= startPage + decodeAhead);
+      _cachePage(i, shouldPreCache);
     }
   }
 
