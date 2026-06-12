@@ -66,12 +66,17 @@ Future<ComicUpdateResult> updateComic(
       }
       return ComicUpdateResult(updated, null);
     } catch (e, s) {
-      Log.error("Check Updates", e, s);
-      await Future.delayed(const Duration(seconds: 2));
       retries--;
       if (retries == 0) {
+        // Only escalate to an error once we've exhausted retries and are
+        // actually giving up on this comic. Transient failures (source script
+        // errors, rate limiting, non-JSON responses) are expected during bulk
+        // update checks and shouldn't flood the error log on every retry.
+        Log.error("Check Updates", e, s);
         return ComicUpdateResult(false, e.toString());
       }
+      Log.warning("Check Updates", "Failed to update ${c.id}, retrying: $e");
+      await Future.delayed(const Duration(seconds: 2));
     }
   }
 }
