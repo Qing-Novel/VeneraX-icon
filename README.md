@@ -14,7 +14,7 @@ A cross-platform manga/comic reader with self-hosted Web frontend support.
 
 > **Disclaimer:** The software in this repository is provided "AS IS", without warranty of any kind, express or implied. The maintainers do not guarantee its accuracy, completeness, or fitness for any particular purpose; use it at your own risk.
 >
-> This project is for personal learning and research only, and its feature development and maintenance are AI-driven. This repository does **not** contain, provide, host, or distribute any content. For any third-party content that users access, obtain, or process through this software, the project makes no guarantee as to its legality, accuracy, or completeness and assumes no liability for it. Users are solely responsible for their own use and must comply with all applicable laws and regulations in their jurisdiction.
+> This project is for personal learning and research only, and its feature development and maintenance are AI-driven. This repository does **not** contain, provide, host, or distribute any content. For any third-party content that users access, obtain, or process through or by modifying this software, the project makes no guarantee as to its legality, accuracy, or completeness and assumes no liability for it. Users are solely responsible for their own use and must comply with all applicable laws and regulations in their jurisdiction.
 >
 > By downloading, copying, modifying, or using this project, you are deemed to have read and accepted this disclaimer. The maintainers reserve the right to modify or supplement this disclaimer at any time.
 
