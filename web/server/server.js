@@ -3854,7 +3854,7 @@ function normalizeHistoryPayload(payload) {
     subtitle: String(history.subtitle || ""),
     cover: String(history.cover || ""),
     time: nullableNumber(history.time) || Date.now(),
-    type,
+    type: authoritativeSourceType(history.sourceKey ?? history.source_key, type),
     sourceKey: String(history.sourceKey ?? history.source_key ?? ""),
     ep: nullableNumber(history.ep) || 0,
     page: nullableNumber(history.page) || 0,
@@ -3887,12 +3887,13 @@ function normalizeReadLaterPayload(payload) {
     }
   }
   const timeNum = Number(src.time ?? payload?.time);
+  const fallbackType = Number.isInteger(type) ? type : NaN;
   return {
     id,
     title: String(src.title || ""),
     subtitle: src.subtitle == null ? "" : String(src.subtitle),
     cover: String(src.cover || src.coverPath || ""),
-    type: Number.isInteger(type) ? type : NaN,
+    type: authoritativeSourceType(src.sourceKey ?? src.source_key, fallbackType),
     tags: JSON.stringify(tagsArray),
     time: Number.isFinite(timeNum) ? timeNum : Date.now(),
   };
@@ -4399,7 +4400,10 @@ function normalizeFavoriteWriteItem(payload) {
     id,
     name: String(item.name ?? item.title ?? ""),
     author: String(item.author || ""),
-    type,
+    type: authoritativeSourceType(
+      item.sourceKey ?? item.source_key ?? payload.sourceKey,
+      type,
+    ),
     sourceKey: String(
       item.sourceKey ?? item.source_key ?? payload.sourceKey ?? "",
     ),
@@ -5329,6 +5333,192 @@ function comicSourceTypeFromKey(sourceKey) {
   h = (h + ((h << 15) >>> 0)) >>> 0;
   h = h & 0x3fffffff;
   return h === 0 ? 1 : h;
+}
+
+// The OLD (incorrect) hash the web frontend used before aligning with native:
+// hash*31+charCode. Kept ONLY to recognize/migrate legacy rows it wrote; never
+// used for new writes.
+function legacyWebSourceTypeHash(sourceKey) {
+  let h = 0;
+  const s = String(sourceKey || "");
+  for (let i = 0; i < s.length; i++) {
+    h = ((h * 31) + s.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h);
+}
+
+// Authoritative source `type` for a row: when a real sourceKey is known, the
+// server recomputes it from the canonical key (Dart-compatible hash), ignoring
+// whatever type the client sent. This makes the server the single source of
+// truth for type, mirroring native's single ComicType.fromKey entry point and
+// preventing any client-side hash drift from poisoning the DB. Falls back to the
+// client type only when sourceKey is empty.
+function authoritativeSourceType(sourceKey, fallbackType) {
+  const key = String(sourceKey || "").trim();
+  if (!key) return fallbackType;
+  if (key === "local") return 0;
+  if (key.startsWith("Unknown:")) {
+    const n = Number(key.slice("Unknown:".length));
+    return Number.isFinite(n) ? n : fallbackType;
+  }
+  const canonical = canonicalComicSourceKey(key);
+  if (!canonical) return fallbackType;
+  return comicSourceTypeFromKey(canonical);
+}
+
+// Build a { oldType -> newType } map for one-time migration of rows the web
+// frontend wrote with the wrong hash. For every installed source we compute its
+// key/canonicalKey under BOTH the legacy (hash*31) and correct (Dart) hashes;
+// when they differ, legacy rows carrying the wrong value can be remapped.
+function buildLegacyTypeMapping(profileRoot) {
+  const mapping = new Map();
+  let sources;
+  try {
+    sources = readServerDbComicSourcePayload(profileRoot);
+  } catch {
+    return mapping;
+  }
+  for (const source of sources) {
+    const keys = new Set();
+    for (const k of [source.key, source.canonicalKey, source.name]) {
+      const s = String(k || "").trim();
+      if (!s) continue;
+      keys.add(s);
+      keys.add(canonicalComicSourceKey(s));
+    }
+    for (const key of keys) {
+      if (!key || key === "local") continue;
+      const oldType = legacyWebSourceTypeHash(key);
+      const newType = comicSourceTypeFromKey(canonicalComicSourceKey(key));
+      if (oldType === newType) continue;
+      // First writer wins; ignore ambiguous collisions onto a different newType.
+      if (!mapping.has(oldType)) mapping.set(oldType, newType);
+    }
+  }
+  return mapping;
+}
+
+// Remap legacy `type` values in one (id, type)-keyed table, merging onto any
+// existing correct row (keeping the most recent `time`). Caller owns the
+// transaction. Returns the number of rows remapped.
+function migrateLegacyTypesInTable(db, table, mapping) {
+  if (!mapping || mapping.size === 0) return 0;
+  const quoted = sqliteIdentifier(table);
+  const cols = db.prepare(`PRAGMA table_info(${quoted});`).all().map((c) => c.name);
+  if (!cols.includes("id") || !cols.includes("type")) return 0;
+  const hasTime = cols.includes("time");
+  const rows = db.prepare(`select rowid, id, type${hasTime ? ", time" : ""} from ${quoted};`).all();
+  let migrated = 0;
+  for (const row of rows) {
+    const oldType = Number(row.type);
+    const newType = mapping.get(oldType);
+    if (newType == null || newType === oldType) continue;
+    const id = row.id;
+    const existing = db
+      .prepare(`select rowid${hasTime ? ", time" : ""} from ${quoted} where id = ? and type = ?;`)
+      .get(id, newType);
+    if (existing) {
+      // A correct-type row already exists for this comic: keep the newer one.
+      const oldTime = hasTime ? Number(row.time || 0) : 0;
+      const newTime = hasTime ? Number(existing.time || 0) : 1;
+      if (hasTime && oldTime > newTime) {
+        db.prepare(`delete from ${quoted} where rowid = ?;`).run(existing.rowid);
+        db.prepare(`update ${quoted} set type = ? where rowid = ?;`).run(newType, row.rowid);
+      } else {
+        db.prepare(`delete from ${quoted} where rowid = ?;`).run(row.rowid);
+      }
+    } else {
+      db.prepare(`update ${quoted} set type = ? where rowid = ?;`).run(newType, row.rowid);
+    }
+    migrated += 1;
+  }
+  return migrated;
+}
+
+const SOURCE_TYPE_MIGRATION_FLAG = "sourceTypeMigrationV1Done";
+
+function readImplicitDataFlag(profileRoot, flag) {
+  try {
+    const fp = join(profileRoot, "implicitData.json");
+    if (!existsSync(fp)) return false;
+    const data = JSON.parse(readFileSync(fp, "utf8"));
+    return !!(data && typeof data === "object" && data[flag]);
+  } catch {
+    return false;
+  }
+}
+
+function writeImplicitDataFlag(profileRoot, flag, value) {
+  try {
+    const fp = join(profileRoot, "implicitData.json");
+    let data = {};
+    try { data = JSON.parse(readFileSync(fp, "utf8")); } catch { /* may not exist */ }
+    if (!data || typeof data !== "object") data = {};
+    if (value) data[flag] = true; else delete data[flag];
+    mkdirSync(profileRoot, { recursive: true });
+    writeFileSync(fp, JSON.stringify(data, null, 2), "utf8");
+  } catch { /* best-effort */ }
+}
+
+// One-time migration of legacy (wrong-hash) source types across history,
+// favorites and read_later. Idempotent; guarded by an implicitData flag for the
+// common read path, but callers pass force=true after a backup import/sync
+// (which byte-overwrites the DBs and may reintroduce legacy rows).
+let _migrationInFlight = false;
+async function runSourceTypeMigration(profileRoot, { force = false } = {}) {
+  if (_migrationInFlight) return;
+  if (!force && readImplicitDataFlag(profileRoot, SOURCE_TYPE_MIGRATION_FLAG)) return;
+  const mapping = buildLegacyTypeMapping(profileRoot);
+  if (mapping.size === 0) {
+    writeImplicitDataFlag(profileRoot, SOURCE_TYPE_MIGRATION_FLAG, true);
+    return;
+  }
+  _migrationInFlight = true;
+  try {
+    // history.db: the `history` table
+    await migrateOneDb(profileRoot, "history.db", (db) => {
+      ensureHistoryDbSchema(db);
+      return [["history", null]];
+    }, mapping);
+    // local_favorite.db: every folder table
+    await migrateOneDb(profileRoot, "local_favorite.db", (db) => {
+      ensureFavoriteDbSchema(db);
+      return favoriteTableNames(db).map((t) => [t, null]);
+    }, mapping);
+    // read_later.db: the `read_later` table
+    await migrateOneDb(profileRoot, "read_later.db", (db) => {
+      ensureReadLaterDbSchema(db);
+      return [["read_later", null]];
+    }, mapping);
+    writeImplicitDataFlag(profileRoot, SOURCE_TYPE_MIGRATION_FLAG, true);
+  } finally {
+    _migrationInFlight = false;
+  }
+}
+
+async function migrateOneDb(profileRoot, dbName, prepareTables, mapping) {
+  const filePath = serverDbEntryPath(profileRoot, dbName);
+  if (!existsSync(filePath)) return;
+  const db = await openWritableSqliteDatabase(filePath);
+  try {
+    const tables = prepareTables(db);
+    let total = 0;
+    db.exec("BEGIN TRANSACTION;");
+    try {
+      for (const [table] of tables) {
+        total += migrateLegacyTypesInTable(db, table, mapping);
+      }
+      db.exec("COMMIT;");
+    } catch (e) {
+      db.exec("ROLLBACK;");
+      throw e;
+    }
+    if (total > 0) {
+      try { console.log(`[migration] ${dbName}: remapped ${total} legacy source-type rows`); } catch { /* ignore */ }
+    }
+  } finally {
+    db.close();
+  }
 }
 
 function sourceTypeCandidates(sourceKey) {
@@ -6398,6 +6588,10 @@ async function handleServerDbRoute({
     }
     const written = writeServerDbJsonDump(profileRoot, payload.data || payload);
     markServerDbDirty(profileRoot, "server-db-import");
+    // The import byte-overwrites the DBs and may reintroduce legacy-typed rows,
+    // so force-rerun the one-time source-type migration.
+    writeImplicitDataFlag(profileRoot, SOURCE_TYPE_MIGRATION_FLAG, false);
+    try { await runSourceTypeMigration(profileRoot, { force: true }); } catch (e) { try { console.error("[migration] import", e); } catch {} }
     sendJson(res, 200, {
       ok: true,
       profile: profileId,
@@ -6603,6 +6797,9 @@ async function handleServerDbRoute({
   }
 
   if (parsedUrl.pathname === "/api/server-db/history/list") {
+    // First-run one-time migration of legacy (wrong-hash) source types. No-op
+    // once the implicitData flag is set; cheap to check.
+    try { await runSourceTypeMigration(profileRoot, { force: false }); } catch (e) { try { console.error("[migration] history/list", e); } catch {} }
     const data = historyRowsFromServerDb(profileRoot, {
       limit: payload.limit,
       offset: payload.offset,
@@ -7996,6 +8193,10 @@ async function handleServerDbRoute({
     if (entries.has("cookie.db")) {
       importServerDbCookieDbToJar(profileRoot, cookieJar, persistCookieJar);
     }
+    // A synced backup byte-overwrites the DBs and may reintroduce legacy-typed
+    // rows; force-rerun the one-time source-type migration.
+    writeImplicitDataFlag(profileRoot, SOURCE_TYPE_MIGRATION_FLAG, false);
+    try { await runSourceTypeMigration(profileRoot, { force: true }); } catch (e) { try { console.error("[migration] webdav", e); } catch {} }
     writeServerDbMetadata(profileRoot, {
       remoteFileName: downloaded.remoteFileName,
       remoteTimestamp: downloaded.remoteTimestamp,
