@@ -151,94 +151,177 @@ void showSourceMigrationDialog(BuildContext context, FavoriteItem comic) {
                           style: ts.s16,
                         ),
                         const SizedBox(height: 12),
-                        // 显示已关联的源 - 单选快速迁移
+                        // 显示已关联的源 - 单选快速迁移（可折叠）
                         if (acceptedLinks.isNotEmpty)
-                          Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: context.colorScheme.primaryContainer,
+                          ExpansionTile(
+                            tilePadding: EdgeInsets.zero,
+                            childrenPadding: const EdgeInsets.only(top: 8),
+                            initiallyExpanded: true,
+                            backgroundColor: context.colorScheme.primaryContainer.withOpacity(0.3),
+                            collapsedBackgroundColor: context.colorScheme.primaryContainer.withOpacity(0.3),
+                            shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(8),
                             ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Icon(
-                                      Icons.link,
-                                      size: 20,
-                                      color: context.colorScheme.onPrimaryContainer,
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Text(
-                                        'Quick migrate to linked source'.tl,
-                                        style: TextStyle(
-                                          color: context.colorScheme.onPrimaryContainer,
-                                          fontWeight: FontWeight.bold,
-                                        ),
+                            collapsedShape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            leading: Icon(
+                              Icons.link,
+                              color: context.colorScheme.primary,
+                            ),
+                            title: Text(
+                              'Quick migrate to linked source'.tl,
+                              style: TextStyle(
+                                color: context.colorScheme.onSurface,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            subtitle: Text(
+                              '@count sources available'.tlParams({
+                                'count': acceptedLinks.length,
+                              }),
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: context.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                            children: [
+                              for (final link in acceptedLinks)
+                                InkWell(
+                                  onTap: () {
+                                    setState(() {
+                                      selectedLinkedSource = link;
+                                      // 清空搜索结果
+                                      resultGroups = <_MigrationSearchGroup>[];
+                                      selectedComic = null;
+                                    });
+                                  },
+                                  child: Container(
+                                    padding: const EdgeInsets.all(8),
+                                    margin: const EdgeInsets.only(bottom: 8),
+                                    decoration: BoxDecoration(
+                                      color: selectedLinkedSource == link
+                                          ? context.colorScheme.primaryContainer
+                                          : context.colorScheme.surface,
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(
+                                        color: selectedLinkedSource == link
+                                            ? context.colorScheme.primary
+                                            : context.colorScheme.outlineVariant,
+                                        width: selectedLinkedSource == link ? 2 : 1,
                                       ),
                                     ),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  'Select one to migrate directly'.tl,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: context.colorScheme.onPrimaryContainer.withOpacity(0.7),
-                                  ),
-                                ),
-                                const SizedBox(height: 12),
-                                for (final link in acceptedLinks)
-                                  Padding(
-                                    padding: const EdgeInsets.only(bottom: 8),
-                                    child: RadioListTile<DomainComicSourceLink>(
-                                      dense: true,
-                                      contentPadding: EdgeInsets.zero,
-                                      value: link,
-                                      groupValue: selectedLinkedSource,
-                                      title: Row(
-                                        children: [
-                                          Icon(
-                                            Icons.link,
-                                            size: 16,
-                                            color: context.colorScheme.primary,
-                                          ),
-                                          const SizedBox(width: 8),
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment: CrossAxisAlignment.start,
-                                              children: [
-                                                Text(
-                                                  link.sourceName,
-                                                  style: const TextStyle(fontWeight: FontWeight.bold),
-                                                ),
-                                                if (link.comicAuthor != null)
-                                                  Text(
-                                                    link.comicAuthor!,
-                                                    style: TextStyle(
-                                                      fontSize: 12,
+                                    child: Row(
+                                      children: [
+                                        // 封面
+                                        ClipRRect(
+                                          borderRadius: BorderRadius.circular(4),
+                                          child: SizedBox(
+                                            width: 48,
+                                            height: 64,
+                                            child: link.comicCoverUri == null || link.comicCoverUri!.isEmpty
+                                                ? Container(
+                                                    color: context.colorScheme.surfaceContainerHighest,
+                                                    child: Icon(
+                                                      Icons.book,
                                                       color: context.colorScheme.onSurfaceVariant,
                                                     ),
+                                                  )
+                                                : AnimatedImage(
+                                                    image: CachedImageProvider(
+                                                      link.comicCoverUri!,
+                                                      sourceKey: _sourceKeyFromPlatformId(link.platformId),
+                                                      cid: link.sourceComicId,
+                                                    ),
+                                                    fit: BoxFit.cover,
                                                   ),
-                                              ],
-                                            ),
                                           ),
-                                        ],
-                                      ),
-                                      onChanged: (value) {
-                                        setState(() {
-                                          selectedLinkedSource = value;
-                                          // 清空搜索结果
-                                          resultGroups = <_MigrationSearchGroup>[];
-                                          selectedComic = null;
-                                        });
-                                      },
+                                        ),
+                                        const SizedBox(width: 12),
+                                        // 信息
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              // 标题
+                                              Text(
+                                                link.comicTitle,
+                                                style: const TextStyle(
+                                                  fontWeight: FontWeight.bold,
+                                                  fontSize: 14,
+                                                ),
+                                                maxLines: 2,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                              const SizedBox(height: 4),
+                                              // 作者
+                                              if (link.comicAuthor != null && link.comicAuthor!.isNotEmpty)
+                                                Row(
+                                                  children: [
+                                                    Icon(
+                                                      Icons.person_outline,
+                                                      size: 14,
+                                                      color: context.colorScheme.onSurfaceVariant,
+                                                    ),
+                                                    const SizedBox(width: 4),
+                                                    Expanded(
+                                                      child: Text(
+                                                        link.comicAuthor!,
+                                                        style: TextStyle(
+                                                          fontSize: 12,
+                                                          color: context.colorScheme.onSurfaceVariant,
+                                                        ),
+                                                        maxLines: 1,
+                                                        overflow: TextOverflow.ellipsis,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              const SizedBox(height: 2),
+                                              // 源名称
+                                              Row(
+                                                children: [
+                                                  Icon(
+                                                    Icons.source,
+                                                    size: 14,
+                                                    color: context.colorScheme.primary,
+                                                  ),
+                                                  const SizedBox(width: 4),
+                                                  Expanded(
+                                                    child: Text(
+                                                      link.sourceName,
+                                                      style: TextStyle(
+                                                        fontSize: 12,
+                                                        color: context.colorScheme.primary,
+                                                        fontWeight: FontWeight.w500,
+                                                      ),
+                                                      maxLines: 1,
+                                                      overflow: TextOverflow.ellipsis,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        // 选中标识
+                                        if (selectedLinkedSource == link)
+                                          Icon(
+                                            Icons.check_circle,
+                                            color: context.colorScheme.primary,
+                                            size: 24,
+                                          )
+                                        else
+                                          Icon(
+                                            Icons.radio_button_unchecked,
+                                            color: context.colorScheme.outlineVariant,
+                                            size: 24,
+                                          ),
+                                      ],
                                     ),
                                   ),
-                              ],
-                            ),
+                                ),
+                            ],
                           ),
                         if (acceptedLinks.isNotEmpty) const SizedBox(height: 16),
                         if (acceptedLinks.isNotEmpty)

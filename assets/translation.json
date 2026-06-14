@@ -755,7 +755,8 @@
     "Select one to migrate directly": "选择一个直接迁移",
     "OR": "或",
     "Search from other sources": "从其他源搜索",
-    "Search and migrate": "搜索并迁移"
+    "Search and migrate": "搜索并迁移",
+    "@count sources available": "@count 个源可用"
   },
   "zh_TW": {
     "Read later": "稍後閱讀",
@@ -1513,6 +1514,7 @@
     "Select one to migrate directly": "選擇一個直接遷移",
     "OR": "或",
     "Search from other sources": "從其他源搜尋",
-    "Search and migrate": "搜尋並遷移"
+    "Search and migrate": "搜尋並遷移",
+    "@count sources available": "@count 個源可用"
   }
 }
