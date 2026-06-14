@@ -150,7 +150,7 @@ void showSourceMigrationDialog(BuildContext context, FavoriteItem comic) {
                           style: ts.s16,
                         ),
                         const SizedBox(height: 12),
-                        // 显示已关联的源提示
+                        // 显示已关联的源提示和快速操作
                         if (relatedSourceKeys.isNotEmpty)
                           Container(
                             padding: const EdgeInsets.all(12),
@@ -158,23 +158,69 @@ void showSourceMigrationDialog(BuildContext context, FavoriteItem comic) {
                               color: context.colorScheme.secondaryContainer,
                               borderRadius: BorderRadius.circular(8),
                             ),
-                            child: Row(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Icon(
-                                  Icons.link,
-                                  size: 20,
-                                  color: context.colorScheme.onSecondaryContainer,
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    'Found @count linked sources'.tlParams({
-                                      'count': relatedSourceKeys.length,
-                                    }),
-                                    style: TextStyle(
+                                Row(
+                                  children: [
+                                    Icon(
+                                      Icons.link,
+                                      size: 20,
                                       color: context.colorScheme.onSecondaryContainer,
                                     ),
-                                  ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        'Found @count linked sources'.tlParams({
+                                          'count': relatedSourceKeys.length,
+                                        }),
+                                        style: TextStyle(
+                                          color: context.colorScheme.onSecondaryContainer,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: OutlinedButton.icon(
+                                        style: OutlinedButton.styleFrom(
+                                          foregroundColor: context.colorScheme.onSecondaryContainer,
+                                          side: BorderSide(
+                                            color: context.colorScheme.onSecondaryContainer.withOpacity(0.5),
+                                          ),
+                                        ),
+                                        icon: const Icon(Icons.check_circle_outline, size: 18),
+                                        label: Text('Select linked only'.tl),
+                                        onPressed: () {
+                                          setState(() {
+                                            selectedSourceKeys
+                                              ..clear()
+                                              ..addAll(relatedSourceKeys);
+                                          });
+                                        },
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: OutlinedButton.icon(
+                                        style: OutlinedButton.styleFrom(
+                                          foregroundColor: context.colorScheme.onSecondaryContainer,
+                                          side: BorderSide(
+                                            color: context.colorScheme.onSecondaryContainer.withOpacity(0.5),
+                                          ),
+                                        ),
+                                        icon: const Icon(Icons.list, size: 18),
+                                        label: Text('View links'.tl),
+                                        onPressed: () {
+                                          showRelatedSourcesDialog(context, comic);
+                                        },
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ],
                             ),

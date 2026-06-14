@@ -748,7 +748,9 @@
     "Migrate to another source": "迁移到其他源",
     "Linked Sources": "关联源",
     "Other Sources": "其他源",
-    "Found @count linked sources": "找到 @count 个关联源"
+    "Found @count linked sources": "找到 @count 个关联源",
+    "Select linked only": "仅选关联源",
+    "View links": "查看关联"
   },
   "zh_TW": {
     "Read later": "稍後閱讀",
@@ -1499,6 +1501,8 @@
     "Migrate to another source": "遷移到其他源",
     "Linked Sources": "關聯源",
     "Other Sources": "其他源",
-    "Found @count linked sources": "找到 @count 個關聯源"
+    "Found @count linked sources": "找到 @count 個關聯源",
+    "Select linked only": "僅選關聯源",
+    "View links": "查看關聯"
   }
 }
