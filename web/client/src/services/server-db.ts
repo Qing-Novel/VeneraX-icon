@@ -19,7 +19,10 @@ function normalizeHistory(item: any): History {
   return {
     ...item,
     type,
-    sourceKey: item?.sourceKey ?? sourceKeyFromType(type),
+    // Backend now recovers the real sourceKey (from favorites / comic_basic_info).
+    // Use it when present; only fall back to the type-derived key when empty so
+    // legacy rows without a recoverable source still resolve to something.
+    sourceKey: (item?.sourceKey || item?.source_key || '').trim() || sourceKeyFromType(type),
     readEpisode,
     maxPage: item?.maxPage ?? item?.max_page ?? null,
     group: item?.group ?? item?.chapter_group ?? null,
@@ -385,7 +388,7 @@ function normalizeReadLater(item: any): ReadLaterItem {
   return {
     id: String(item?.id ?? ''),
     type,
-    sourceKey: item?.sourceKey ?? sourceKeyFromType(type),
+    sourceKey: (item?.sourceKey || item?.source_key || '').trim() || sourceKeyFromType(type),
     title: String(item?.title ?? ''),
     subtitle: item?.subtitle ?? '',
     cover: String(item?.cover ?? ''),

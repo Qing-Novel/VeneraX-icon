@@ -3115,6 +3115,32 @@ function historyRowsFromServerDb(profileRoot, { limit = 100, offset = 0 } = {}) 
     } catch (_) { /* favorites unavailable, proceed without enrichment */ }
   }
 
+  // Build an id → sourceKey lookup from comic_basic_info (comic_id = "sourceKey:id").
+  // The history table has no source_key column, so without this the frontend
+  // falls back to sourceKeyFromType(hash) → "Unknown:<hash>", which can't be
+  // resolved back to a real source and breaks chapter loading on the detail page.
+  const comicSourceKeyById = new Map();
+  try {
+    const histData = extractSqliteData(readFileSync(filePath));
+    const basicTable = histData.tables.find((t) => t.name === "comic_basic_info");
+    if (basicTable) {
+      const cidIdx = basicTable.columns.indexOf("comic_id");
+      if (cidIdx >= 0) {
+        for (const r of basicTable.rows) {
+          const comicId = String(r[cidIdx] || "");
+          const sep = comicId.indexOf(":");
+          if (sep > 0) {
+            const sk = comicId.slice(0, sep);
+            const cid = comicId.slice(sep + 1);
+            if (cid && sk && !comicSourceKeyById.has(cid)) {
+              comicSourceKeyById.set(cid, sk);
+            }
+          }
+        }
+      }
+    }
+  } catch (_) { /* comic_basic_info unavailable, proceed without sourceKey */ }
+
   const rows = table.rows.map((row) => {
     const item = {};
     for (let index = 0; index < table.columns.length; index++) {
@@ -3126,6 +3152,8 @@ function historyRowsFromServerDb(profileRoot, { limit = 100, offset = 0 } = {}) 
     const id = String(item.id || "");
     const type = Number(item.type || 0);
     const fav = favLookup.get(`${id} ${type}`);
+    // Recover the real sourceKey: favorites row first, then comic_basic_info.
+    const sourceKey = String(fav?.source_key || comicSourceKeyById.get(id) || "");
 
     return {
       id,
@@ -3134,6 +3162,7 @@ function historyRowsFromServerDb(profileRoot, { limit = 100, offset = 0 } = {}) 
       cover: String(item.cover || fav?.cover_path || ""),
       time: Number(item.time || 0),
       type,
+      sourceKey,
       ep: Number(item.ep || 0),
       page: Number(item.page || 0),
       readEpisode,
@@ -3268,6 +3297,28 @@ function readLaterRowsFromServerDb(profileRoot, { limit, offset } = {}) {
   if (!table) {
     return { total: 0, items: [] };
   }
+  // Recover sourceKey from comic_basic_info (history.db), since read_later has
+  // no source_key column. Without it the frontend derives "Unknown:<hash>".
+  const comicSourceKeyById = new Map();
+  try {
+    const histPath = serverDbEntryPath(profileRoot, "history.db");
+    if (existsSync(histPath)) {
+      const histData = extractSqliteData(readFileSync(histPath));
+      const basicTable = histData.tables.find((t) => t.name === "comic_basic_info");
+      const cidIdx = basicTable ? basicTable.columns.indexOf("comic_id") : -1;
+      if (cidIdx >= 0) {
+        for (const r of basicTable.rows) {
+          const comicId = String(r[cidIdx] || "");
+          const sep = comicId.indexOf(":");
+          if (sep > 0) {
+            const sk = comicId.slice(0, sep);
+            const cid = comicId.slice(sep + 1);
+            if (cid && sk && !comicSourceKeyById.has(cid)) comicSourceKeyById.set(cid, sk);
+          }
+        }
+      }
+    }
+  } catch (_) { /* comic_basic_info unavailable */ }
   const items = table.rows.map((row) => {
     const item = {};
     for (let index = 0; index < table.columns.length; index++) {
@@ -3281,12 +3332,14 @@ function readLaterRowsFromServerDb(profileRoot, { limit, offset } = {}) {
       } catch { /* tags stored malformed; treat as empty */ }
     }
     const type = Number(item.type || 0);
+    const rid = String(item.id || "");
     return {
-      id: String(item.id || ""),
+      id: rid,
       title: String(item.title || ""),
       subtitle: item.subtitle == null ? "" : String(item.subtitle),
       cover: String(item.cover || ""),
       type,
+      sourceKey: comicSourceKeyById.get(rid) || "",
       tags,
       time: Number(item.time || 0),
     };
