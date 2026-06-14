@@ -2,7 +2,7 @@
 import { ref } from 'vue'
 import { DISCLAIMER_PARAGRAPHS, DISCLAIMER_TITLE } from '../utils/disclaimer'
 
-const props = defineProps<{
+defineProps<{
   show: boolean
   // When true, the dialog blocks (no close, requires checkbox + accept).
   gate?: boolean
