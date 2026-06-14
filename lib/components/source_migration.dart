@@ -439,6 +439,8 @@ void showSourceMigrationDialog(BuildContext context, FavoriteItem comic) {
                               onSelected: (result) {
                                 setState(() {
                                   selectedComic = result;
+                                  // 清空关联源选择
+                                  selectedLinkedSource = null;
                                 });
                               },
                               onToggleShowAll: () {
@@ -853,6 +855,7 @@ class _MigrationSearchGroupTile extends StatelessWidget {
     return ExpansionTile(
       tilePadding: EdgeInsets.zero,
       initiallyExpanded: false,
+      maintainState: true,
       title: Text(group.source.name),
       subtitle: Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
       children: [
