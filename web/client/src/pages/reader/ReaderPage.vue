@@ -332,6 +332,13 @@ function scheduleSave() {
 function goPage(p: number) {
   if (p >= 0 && p < totalPages.value) {
     currentPage.value = p
+    // Continuous mode is a scroll container: assigning currentPage alone won't
+    // move the view (and the next scroll event would snap it back). Scroll the
+    // target image into view so arrow-key / tap navigation actually works.
+    if (isContinuous.value && continuousEl.value) {
+      const els = continuousEl.value.querySelectorAll('.img-placeholder')
+      if (els[p]) els[p].scrollIntoView({ block: 'start', inline: 'start' })
+    }
   } else if (p >= totalPages.value && continuousChapter.value) {
     // End of chapter - auto load next chapter
     goChapterByOffset(1)
@@ -674,6 +681,22 @@ function doScrollUpdate() {
     p = i
   }
   if (p !== currentPage.value) currentPage.value = p
+  // In continuous mode the current chapter is whichever boundary the scroll
+  // position falls into — derive it here so the toolbar title / chapter index
+  // stay correct across auto-loaded chapters (and so loadPrev doesn't re-load
+  // the same chapter because currentChapterId went stale).
+  if (isContinuous.value) {
+    const boundary = currentChapterBoundary.value
+    if (boundary && (boundary as any).chapterId && (boundary as any).chapterId !== currentChapterId.value) {
+      const bid = (boundary as any).chapterId as string
+      currentChapterId.value = bid
+      const idx = flatChapters.value.findIndex(c => c.id === bid)
+      if (idx >= 0) {
+        chapterIndex.value = idx
+        chapterTitle.value = flatChapters.value[idx]?.title || chapterTitle.value
+      }
+    }
+  }
   // Show page indicator on scroll
   showPageIndicator.value = true
   if (pageIndicatorTimer) clearTimeout(pageIndicatorTimer)
@@ -705,7 +728,11 @@ function doScrollUpdate() {
 
 async function loadNextChapterContinuous() {
   const list = flatChapters.value
-  const current = list.findIndex(ch => ch.id === currentChapterId.value)
+  // Base off the LAST loaded chapter boundary, not currentChapterId (which
+  // tracks the scroll position and lags behind preloaded chapters).
+  const lastBoundary = chapterBoundaries.value[chapterBoundaries.value.length - 1]
+  const lastLoadedId = lastBoundary?.chapterId ?? currentChapterId.value
+  const current = list.findIndex(ch => ch.id === lastLoadedId)
   const fallback = current >= 0 ? current : chapterIndex.value
   const next = fallback + 1
   if (next >= list.length) {
@@ -722,9 +749,9 @@ async function loadNextChapterContinuous() {
       const prevLen = images.value.length
       images.value = [...images.value, ...res.data]
       chapterBoundaries.value = [...chapterBoundaries.value, { chapterId: nextCh.id, startIndex: prevLen, length: res.data.length }]
-      currentChapterId.value = nextCh.id
-      chapterIndex.value = next
-      chapterTitle.value = res.title || nextCh.title || `E${next + 1}`
+      // Do NOT set currentChapterId here — the next chapter is only preloaded,
+      // the user may still be reading the current one. doScrollUpdate derives
+      // currentChapterId from the scroll position so the title stays accurate.
     }
   } catch { /* silent */ }
   finally { loadingNextChapter.value = false }
@@ -732,7 +759,12 @@ async function loadNextChapterContinuous() {
 
 async function loadPrevChapterContinuous() {
   const list = flatChapters.value
-  const current = list.findIndex(ch => ch.id === currentChapterId.value)
+  // Base off the FIRST loaded chapter boundary, not currentChapterId, so we
+  // prepend the chapter before the earliest-loaded one (and never re-load the
+  // same chapter repeatedly).
+  const firstBoundary = chapterBoundaries.value[0]
+  const firstLoadedId = firstBoundary?.chapterId ?? currentChapterId.value
+  const current = list.findIndex(ch => ch.id === firstLoadedId)
   const fallback = current >= 0 ? current : chapterIndex.value
   const prev = fallback - 1
   if (prev < 0) return
