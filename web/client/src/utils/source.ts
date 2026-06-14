@@ -221,10 +221,15 @@ export function resolveSourceKey(
 ): string {
   const explicit = stringValue(item.sourceKey) || stringValue(item.source_key)
   if (explicit) {
+    const explicitCanonical = canonicalSourceKey(explicit)
     const matched = sources.find(source => {
       const key = stringValue(source.key)
       const canonicalKey = stringValue(source.canonicalKey) || stringValue(source.canonical_key) || key
+      // Compare both raw and canonicalized forms so a stored "copy_manga(0)"
+      // still matches an installed "copy_manga" source.
       return key === explicit || canonicalKey === explicit
+        || key === explicitCanonical || canonicalKey === explicitCanonical
+        || canonicalSourceKey(key) === explicitCanonical
     })
     if (matched) return stringValue(matched.key)
     // An "Unknown:<hash>" explicit key carries a numeric type we can still
@@ -238,7 +243,9 @@ export function resolveSourceKey(
         if (byType) return stringValue(byType.key)
       }
     } else {
-      return explicit
+      // No installed source matched; return the canonicalized key so a stale
+      // "(N)" suffix never leaks into the UI / downstream type hashing.
+      return explicitCanonical || explicit
     }
   }
 
