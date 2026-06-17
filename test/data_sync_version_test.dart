@@ -55,8 +55,10 @@ void main() {
       expect(info.version, 3);
     });
 
-    test('absurdly large leading segment is clamped, never throws', () {
-      // Even a value too big to be a real timestamp must not crash the scan.
+    test('leading segment that overflows int64 falls back to epoch, never throws',
+        () {
+      // 20 digits exceeds Dart's int range, so int.tryParse returns null and we
+      // fall back to 0 (epoch) rather than crashing the directory scan.
       late RemoteBackupInfo info;
       expect(
         () => info = RemoteBackupInfo.fromFileName(
@@ -64,6 +66,23 @@ void main() {
         returnsNormally,
       );
       expect(info.version, 1);
+      expect(info.date, DateTime.fromMillisecondsSinceEpoch(0));
+    });
+
+    test('parseable-but-out-of-range leading segment is clamped to the max date',
+        () {
+      // 9e15 parses as a valid int64 but exceeds DateTime's millisecond range.
+      // This is the only case that exercises the `ms > _maxValidMs` clamp branch
+      // of _dateFromLeadingSegment; without the clamp,
+      // fromMillisecondsSinceEpoch(9000000000000000) would throw RangeError.
+      late RemoteBackupInfo info;
+      expect(
+        () => info = RemoteBackupInfo.fromFileName(
+            '9000000000000000-2.android.venera'),
+        returnsNormally,
+      );
+      expect(info.version, 2);
+      expect(info.date, DateTime.fromMillisecondsSinceEpoch(8640000000000000));
     });
   });
 }
