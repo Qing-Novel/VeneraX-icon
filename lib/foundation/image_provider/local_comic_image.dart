@@ -17,6 +17,14 @@ class LocalComicImageProvider
 
   @override
   Future<Uint8List> load(chunkEvents, checkStop) async {
+    // A placeholder for a queued download task (merged into the local comics
+    // grid before it is scheduled) has no directory yet. Its `baseDir` would
+    // resolve to the downloads root, and the fallback scan below would then
+    // return the first downloaded comic's cover for EVERY such placeholder
+    // (issue #53). Without a real own directory there is no cover to load.
+    if (comic.directory.isEmpty) {
+      throw "Error: Cover not found.";
+    }
     File? file = comic.coverFile;
     if(! await file.exists()) {
       file = null;
