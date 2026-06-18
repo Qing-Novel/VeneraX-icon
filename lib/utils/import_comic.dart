@@ -95,6 +95,32 @@ class ImportComic {
     return registerComics(imported, false);
   }
 
+  /// Imports every .venera_comics file found directly inside [dir]. Pairs with
+  /// the per-comic export (issue #54): re-importing an export folder works.
+  Future<bool> multipleVeneraComicsFromDir(Directory dir) async {
+    var files = (await dir.list().toList())
+        .whereType<File>()
+        .where((e) => e.name.toLowerCase().endsWith('.venera_comics'))
+        .toList();
+    if (files.isEmpty) {
+      App.rootContext.showMessage(message: "No valid comics found".tl);
+      return false;
+    }
+    var controller = showLoadingDialog(App.rootContext, allowCancel: false);
+    var total = 0;
+    for (var file in files) {
+      try {
+        total += await importVeneraComics(file);
+      } catch (e, s) {
+        Log.error("Import Comic", e.toString(), s);
+      }
+    }
+    controller.close();
+    App.rootContext.showMessage(
+        message: "Imported @a comics".tlParams({'a': total}));
+    return true;
+  }
+
   Future<bool> ehViewer() async {
     var dbFile = await selectFile(ext: ['db']);
     final picker = DirectoryPicker();
@@ -238,6 +264,7 @@ class ImportComic {
     if (path == null) return null;
 
     var hasArchive = false;
+    var hasVeneraComics = false;
     var hasSubDir = false;
     var hasImageInRoot = false;
     var hasMetaInRoot = false;
@@ -251,12 +278,16 @@ class ImportComic {
         hasSubDir = true;
       } else if (e is File) {
         final ext = name.split('.').last;
+        if (ext == 'venera_comics') hasVeneraComics = true;
         if (arcExt.contains(ext)) hasArchive = true;
         if (imgExt.contains(ext)) hasImageInRoot = true;
         if (metaFiles.contains(name)) hasMetaInRoot = true;
       }
     }
 
+    if (hasVeneraComics) {
+      return (kind: 'venera_comics', guessMulti: false, dir: path);
+    }
     if (hasArchive) return (kind: 'cbz', guessMulti: false, dir: path);
     if (!hasSubDir && hasImageInRoot) {
       return (kind: 'single', guessMulti: false, dir: path);

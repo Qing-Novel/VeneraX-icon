@@ -1040,6 +1040,9 @@ class _ImportComicsWidgetState extends State<ImportComicsWidget> {
   Future<bool> _importFolderWithConfirm(ImportComic importer) async {
     final r = await importer.inspectFolder();
     if (r == null) return false;
+    if (r.kind == 'venera_comics') {
+      return importer.multipleVeneraComicsFromDir(r.dir);
+    }
     if (r.kind == 'cbz') {
       return importer.multipleCbzFromDir(r.dir);
     }

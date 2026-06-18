@@ -206,10 +206,7 @@ class _LocalComicsPageState extends State<LocalComicsPage>
         MenuEntry(
           icon: Icons.archive_outlined,
           text: "Export .venera_comics".tl,
-          onClick: () => _startExportTask(
-            selectedComics.keys.toList(),
-            ExportFormat.veneraComics,
-          ),
+          onClick: () => _startVeneraExport(selectedComics.keys.toList()),
         ),
     ]);
   }
@@ -295,7 +292,7 @@ class _LocalComicsPageState extends State<LocalComicsPage>
           ),
           MenuEntry(
             icon: Icons.file_upload_outlined,
-            text: "Export .venera_comics".tl,
+            text: "Export".tl,
             onClick: () {
               setState(() {
                 multiSelectMode = true;
@@ -539,7 +536,44 @@ class _LocalComicsPageState extends State<LocalComicsPage>
   /// writes each comic as one file into it (issue #54). A bound loading dialog
   /// shows progress and offers a "Background" button; the task keeps running
   /// in the background and is visible in the Tasks page.
-  void _startExportTask(List<LocalComic> comics, ExportFormat format) async {
+  /// Asks whether to merge into a single .venera_comics bundle (default off),
+  /// then starts the export. Per-comic files (default) keep the export
+  /// resumable and importable from a folder.
+  void _startVeneraExport(List<LocalComic> comics) async {
+    if (comics.isEmpty) return;
+    bool merge = false;
+    var go = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => ContentDialog(
+          title: "Export .venera_comics".tl,
+          content: SwitchListTile(
+            title: Text("Merge into a single .venera_comics".tl),
+            value: merge,
+            onChanged: (v) => setLocal(() => merge = v),
+          ),
+          actions: [
+            Button.text(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text("Cancel".tl),
+            ),
+            Button.filled(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text("Export".tl),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (go != true || !mounted) return;
+    _startExportTask(comics, ExportFormat.veneraComics, merged: merge);
+  }
+
+  void _startExportTask(
+    List<LocalComic> comics,
+    ExportFormat format, {
+    bool merged = false,
+  }) async {
     if (comics.isEmpty) return;
     var manager = ExportTaskManager.instance;
     if (manager.hasActiveTask) {
@@ -552,6 +586,7 @@ class _LocalComicsPageState extends State<LocalComicsPage>
       folderPath: folder,
       format: format,
       comics: comics,
+      merged: merged,
     );
     if (task == null) return;
     var controller = showLoadingDialog(

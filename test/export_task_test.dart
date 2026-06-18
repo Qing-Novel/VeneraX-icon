@@ -85,4 +85,19 @@ void main() {
       expect(restored.status, status);
     }
   });
+
+  test('merged flag round-trips', () {
+    final task = ExportTask(
+      id: '9',
+      folderPath: '/dest',
+      format: ExportFormat.veneraComics,
+      comics: const [],
+      createdAt: DateTime(2024),
+      merged: true,
+    );
+    expect(task.merged, isTrue);
+    expect(ExportTask.fromJson(task.toJson()).merged, isTrue);
+    // Default is off (per-comic files).
+    expect(makeTask().merged, isFalse);
+  });
 }

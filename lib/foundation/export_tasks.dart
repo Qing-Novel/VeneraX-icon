@@ -85,6 +85,7 @@ class ExportTask {
     required this.comics,
     required this.createdAt,
     Set<String>? doneKeys,
+    this.merged = false,
     this.failedCount = 0,
     this.status = ExportTaskStatus.running,
     this.currentTitle,
@@ -97,6 +98,10 @@ class ExportTask {
   final ExportFormat format;
   final List<ExportComicRef> comics;
   final DateTime createdAt;
+
+  /// When true (only for the venera_comics format), all comics are written to
+  /// a single combined .venera_comics file instead of one file per comic.
+  final bool merged;
 
   /// Keys ([ExportComicRef.key]) of comics already written (or skipped).
   final Set<String> doneKeys;
@@ -128,6 +133,7 @@ class ExportTask {
         'format': format.name,
         'comics': comics.map((e) => e.toJson()).toList(),
         'doneKeys': doneKeys.toList(),
+        'merged': merged,
         'failedCount': failedCount,
         // Persist active tasks as paused so they are not auto-run on restart.
         'status': isActive ? ExportTaskStatus.paused.name : status.name,
@@ -145,6 +151,7 @@ class ExportTask {
             .map((e) => ExportComicRef.fromJson(Map<String, dynamic>.from(e)))
             .toList(),
         doneKeys: (json['doneKeys'] as List? ?? []).map((e) => '$e').toSet(),
+        merged: json['merged'] ?? false,
         failedCount: json['failedCount'] ?? 0,
         status: ExportTaskStatus.values.firstWhere(
           (e) => e.name == json['status'],
@@ -177,6 +184,7 @@ class ExportTaskManager with ChangeNotifier {
     required String folderPath,
     required ExportFormat format,
     required List<LocalComic> comics,
+    bool merged = false,
   }) {
     if (currentTasks.any((t) => t.isActive)) {
       return null;
@@ -193,6 +201,7 @@ class ExportTaskManager with ChangeNotifier {
               ))
           .toList(),
       createdAt: DateTime.now(),
+      merged: merged && format == ExportFormat.veneraComics,
     );
     currentTasks.insert(0, task);
     _persist();
@@ -250,75 +259,80 @@ class ExportTaskManager with ChangeNotifier {
         cacheDir.createSync(recursive: true);
       }
       final targetDir = Directory(task.folderPath);
-      // Resolve a unique output file name per comic up front. Two comics with
-      // the same title would otherwise map to the same file, and the second
-      // would be silently skipped by the resume "already exists" check. The
-      // order of [task.comics] is stable and persisted, so this is
-      // deterministic across an app restart — resume picks the same names.
-      final outNames = <String, String>{};
-      final usedNames = <String>{};
-      for (final ref in task.comics) {
-        final base = sanitizeFileName(ref.title, maxLength: 100);
-        var name = '$base${task.format.ext}';
-        var n = 2;
-        while (usedNames.contains(name)) {
-          name = '$base ($n)${task.format.ext}';
-          n++;
+      if (task.merged) {
+        await _runMerged(task, targetDir);
+      } else {
+        // Resolve a unique output file name per comic up front. Two comics with
+        // the same title would otherwise map to the same file, and the second
+        // would be silently skipped by the resume "already exists" check. The
+        // order of [task.comics] is stable and persisted, so this is
+        // deterministic across an app restart — resume picks the same names.
+        final outNames = <String, String>{};
+        final usedNames = <String>{};
+        for (final ref in task.comics) {
+          final base = sanitizeFileName(ref.title, maxLength: 100);
+          var name = '$base${task.format.ext}';
+          var n = 2;
+          while (usedNames.contains(name)) {
+            name = '$base ($n)${task.format.ext}';
+            n++;
+          }
+          usedNames.add(name);
+          outNames[ref.key] = name;
         }
-        usedNames.add(name);
-        outNames[ref.key] = name;
-      }
-      for (final ref in task.comics) {
-        if (_canceledIds.contains(task.id)) {
-          task.status = ExportTaskStatus.canceled;
-          break;
-        }
-        if (_pausedIds.contains(task.id)) {
-          task.status = ExportTaskStatus.paused;
-          task.currentTitle = null;
+        for (final ref in task.comics) {
+          if (_canceledIds.contains(task.id)) {
+            task.status = ExportTaskStatus.canceled;
+            break;
+          }
+          if (_pausedIds.contains(task.id)) {
+            task.status = ExportTaskStatus.paused;
+            task.currentTitle = null;
+            notifyListeners();
+            _persist();
+            return; // keep in currentTasks; resumable
+          }
+          if (task.doneKeys.contains(ref.key)) {
+            continue;
+          }
+
+          final outName = outNames[ref.key]!;
+          final target = targetDir.joinFile(outName);
+
+          // Resume: a comic already written to the folder is skipped.
+          if (await target.exists()) {
+            task.doneKeys.add(ref.key);
+            notifyListeners();
+            _persist();
+            continue;
+          }
+
+          task.currentTitle = ref.title;
           notifyListeners();
-          _persist();
-          return; // keep in currentTasks; resumable
-        }
-        if (task.doneKeys.contains(ref.key)) {
-          continue;
-        }
 
-        final outName = outNames[ref.key]!;
-        final target = targetDir.joinFile(outName);
+          final comic = LocalManager().find(ref.id, ref.comicType);
+          if (comic == null) {
+            // The comic was deleted since the task was created; skip it.
+            task.failedCount++;
+            task.doneKeys.add(ref.key);
+            notifyListeners();
+            _persist();
+            continue;
+          }
 
-        // Resume: a comic already written to the folder is skipped.
-        if (await target.exists()) {
+          try {
+            final produced =
+                await _buildToCache(comic, task.format, cacheDir.path);
+            await target.writeAsBytes(await produced.readAsBytes());
+            produced.deleteIgnoreError();
+          } catch (e, s) {
+            Log.error('Export Comics', e.toString(), s);
+            task.failedCount++;
+          }
           task.doneKeys.add(ref.key);
           notifyListeners();
           _persist();
-          continue;
         }
-
-        task.currentTitle = ref.title;
-        notifyListeners();
-
-        final comic = LocalManager().find(ref.id, ref.comicType);
-        if (comic == null) {
-          // The comic was deleted since the task was created; skip it.
-          task.failedCount++;
-          task.doneKeys.add(ref.key);
-          notifyListeners();
-          _persist();
-          continue;
-        }
-
-        try {
-          final produced = await _buildToCache(comic, task.format, cacheDir.path);
-          await target.writeAsBytes(await produced.readAsBytes());
-          produced.deleteIgnoreError();
-        } catch (e, s) {
-          Log.error('Export Comics', e.toString(), s);
-          task.failedCount++;
-        }
-        task.doneKeys.add(ref.key);
-        notifyListeners();
-        _persist();
       }
 
       if (task.status == ExportTaskStatus.running) {
@@ -344,6 +358,71 @@ class ExportTaskManager with ChangeNotifier {
       _persist();
       notifyListeners();
     }
+  }
+
+  /// Builds a single combined .venera_comics containing all comics (merge
+  /// mode). A combined archive cannot resume mid-build, so this is
+  /// all-or-nothing: if the output file already exists it is treated as done,
+  /// otherwise the whole bundle is rebuilt.
+  Future<void> _runMerged(ExportTask task, Directory targetDir) async {
+    final allKeys = task.comics.map((c) => c.key).toList();
+    if (_canceledIds.contains(task.id)) {
+      task.status = ExportTaskStatus.canceled;
+      return;
+    }
+    final target = targetDir.joinFile(_mergedFileName(task.createdAt));
+    if (await target.exists()) {
+      task.doneKeys
+        ..clear()
+        ..addAll(allKeys);
+      return;
+    }
+    task.doneKeys.clear();
+    notifyListeners();
+    _persist();
+    final comics = <LocalComic>[];
+    for (final ref in task.comics) {
+      final c = LocalManager().find(ref.id, ref.comicType);
+      if (c != null) comics.add(c);
+    }
+    if (comics.isEmpty) {
+      task.failedCount = task.comics.length;
+      return;
+    }
+    final produced = await exportVeneraComics(
+      comics,
+      onProgress: (current, total) {
+        // Reuse doneKeys to drive the progress bar during the build.
+        task.doneKeys
+          ..clear()
+          ..addAll(
+            comics.take(current).map((c) => '${c.id}_${c.comicType.value}'),
+          );
+        task.currentTitle =
+            (current > 0 && current <= comics.length) ? comics[current - 1].title : null;
+        notifyListeners();
+      },
+    );
+    await target.writeAsBytes(await produced.readAsBytes());
+    produced.deleteIgnoreError();
+    if (_canceledIds.contains(task.id)) {
+      // Cancellation requested during the (uninterruptible) build: drop the
+      // just-written bundle so a canceled export leaves nothing behind.
+      target.deleteIgnoreError();
+      task.status = ExportTaskStatus.canceled;
+      return;
+    }
+    task.doneKeys
+      ..clear()
+      ..addAll(allKeys);
+    notifyListeners();
+    _persist();
+  }
+
+  String _mergedFileName(DateTime t) {
+    String two(int n) => n.toString().padLeft(2, '0');
+    return 'venera_comics_${t.year}${two(t.month)}${two(t.day)}'
+        '_${two(t.hour)}${two(t.minute)}${two(t.second)}.venera_comics';
   }
 
   /// Builds one comic into [cacheDir] using the existing per-format exporters
