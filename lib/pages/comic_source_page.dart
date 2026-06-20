@@ -194,13 +194,51 @@ class _BodyState extends State<_Body> {
       content: "Delete comic source '@n' ?".tlParams({"n": source.name}),
       btnColor: context.colorScheme.error,
       onConfirm: () {
-        var file = File(source.filePath);
-        file.delete();
+        _purgeComicSourceData(source);
         ComicSourceManager().remove(source.key);
         _validatePages();
         App.forceRebuild();
       },
     );
+  }
+
+  /// Remove everything a source persists locally so that reinstalling it starts
+  /// from a clean state. Without this, the `<key>.data` file (which keeps the
+  /// login flag, saved credentials and webview localStorage) and the source's
+  /// cookies survive deletion, so a freshly reinstalled source appears already
+  /// logged in with stale data.
+  void _purgeComicSourceData(ComicSource source) {
+    // 1. The script file itself.
+    try {
+      var file = File(source.filePath);
+      if (file.existsSync()) file.deleteSync();
+    } catch (e) {
+      Log.error("Delete comic source", e.toString());
+    }
+    // 2. Persisted data: account/login flag, _localStorage, settings, etc.
+    try {
+      var dataFile = File("${App.dataPath}/comic_source/${source.key}.data");
+      if (dataFile.existsSync()) dataFile.deleteSync();
+    } catch (e) {
+      Log.error("Delete comic source", e.toString());
+    }
+    // 3. Cookies for the source domain, so a reinstall is not auto-logged-in.
+    //    Skip when another installed source shares the same host to avoid
+    //    logging that source out.
+    try {
+      var uri = Uri.tryParse(source.url);
+      var host = uri?.host ?? '';
+      if (host.isNotEmpty) {
+        var sharedByOther = ComicSource.all().any(
+          (e) => e.key != source.key && Uri.tryParse(e.url)?.host == host,
+        );
+        if (!sharedByOther) {
+          SingleInstanceCookieJar.instance?.deleteUri(uri!);
+        }
+      }
+    } catch (e) {
+      Log.error("Delete comic source", e.toString());
+    }
   }
 
   void edit(ComicSource source) async {
