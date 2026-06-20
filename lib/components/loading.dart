@@ -31,6 +31,12 @@ class NetworkError extends StatelessWidget {
     var cfe = CloudflareException.fromString(message);
     Widget body = Center(
       child: SingleChildScrollView(
+        // Give this scroll view its own PageStorage slot. Without a key it
+        // inherits the nearest ancestor PageStorageKey chain, which can match
+        // the identifier a parent uses to persist its own state map; the scroll
+        // position would then read that map and crash casting it to double? in
+        // ScrollPosition.restoreScrollOffset.
+        key: const PageStorageKey('network_error_scroll'),
         padding: const EdgeInsets.symmetric(horizontal: 16),
         child: Column(
           mainAxisSize: MainAxisSize.min,

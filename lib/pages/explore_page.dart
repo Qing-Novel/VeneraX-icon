@@ -513,8 +513,17 @@ class _MultiPartExplorePageState extends State<_MultiPartExplorePage> {
   }
 
   void storeState() {
-    PageStorage.of(context).writeState(context, state);
+    PageStorage.of(context).writeState(context, state, identifier: _storageId);
   }
+
+  // Persist under an explicit string identifier rather than the context-derived
+  // one. The context identifier is the ancestor PageStorageKey chain, which a
+  // descendant scroll view lacking its own key (e.g. the one inside
+  // NetworkError) computes identically — it would then read this map as its
+  // scroll offset and crash casting Map to double?. A plain string identifier
+  // can never equal a Scrollable's identifier.
+  Object get _storageId =>
+      'explore_multipart::${widget.comicSourceKey}::${widget.data.title}';
 
   void refresh() {
     setState(() {
@@ -534,7 +543,9 @@ class _MultiPartExplorePageState extends State<_MultiPartExplorePage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    restoreState(PageStorage.of(context).readState(context));
+    restoreState(
+      PageStorage.of(context).readState(context, identifier: _storageId),
+    );
     widget.refreshHandlerCallback(refresh);
   }
 
