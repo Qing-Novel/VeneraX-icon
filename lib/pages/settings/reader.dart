@@ -387,7 +387,8 @@ class _ReaderSettingsState extends State<ReaderSettings> {
                 widget.onChanged?.call("readerNightModeFollowSystem");
               },
             ),
-            if (appdata.settings['readerNightMode'] == true)
+            if (appdata.settings['readerNightMode'] == true ||
+                appdata.settings['readerNightModeFollowSystem'] == true)
               SelectSetting(
                 title: "Night mode color".tl,
                 settingKey: "readerNightModeColor",
@@ -400,7 +401,8 @@ class _ReaderSettingsState extends State<ReaderSettings> {
                   widget.onChanged?.call("readerNightModeColor");
                 },
               ),
-            if (appdata.settings['readerNightMode'] == true)
+            if (appdata.settings['readerNightMode'] == true ||
+                appdata.settings['readerNightModeFollowSystem'] == true)
               _SliderSetting(
                 title: "Night mode intensity".tl,
                 settingsIndex: "readerNightModeIntensity",
