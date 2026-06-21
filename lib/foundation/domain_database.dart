@@ -89,7 +89,7 @@ class DomainComicSourceLink {
 }
 
 class DomainDatabase {
-  static const schemaVersion = 3;
+  static const schemaVersion = 4;
   static const dataDirectoryName = 'data';
   static const databaseFileName = 'venera.db';
 
@@ -217,6 +217,58 @@ class DomainDatabase {
       'base_info_updated_at',
       'base_info_updated_at INTEGER NOT NULL DEFAULT 0',
     );
+    addColumnIfMissing('comics', 'normalized_title', 'normalized_title TEXT');
+    _backfillNormalizedTitles(db);
+    db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_comics_normalized_title '
+      'ON comics(normalized_title);',
+    );
+    _dropRetiredTables(db);
+  }
+
+  /// Populates [normalized_title] for rows written before the column existed,
+  /// so the matching index can serve every comic.
+  static void _backfillNormalizedTitles(CommonDatabase db) {
+    final rows = db.select(
+      "SELECT comic_id, title FROM comics WHERE normalized_title IS NULL;",
+    );
+    if (rows.isEmpty) {
+      return;
+    }
+    final statement = db.prepare(
+      'UPDATE comics SET normalized_title = ? WHERE comic_id = ?;',
+    );
+    try {
+      for (final row in rows) {
+        statement.execute([
+          _normalizeForMatch(row['title'] as String? ?? ''),
+          row['comic_id'] as String,
+        ]);
+      }
+    } finally {
+      statement.dispose();
+    }
+  }
+
+  /// Drops tables that were provisioned ahead of features that never shipped.
+  /// Children are removed before their parents so foreign keys stay satisfied.
+  static void _dropRetiredTables(CommonDatabase db) {
+    const retiredTables = [
+      'reader_tabs',
+      'reader_sessions',
+      'page_order_items',
+      'page_orders',
+      'page_sources',
+      'chapter_collection_items',
+      'chapter_collections',
+      'import_batches',
+      'comic_titles',
+      'comic_tags',
+      'remote_match_candidates',
+    ];
+    for (final table in retiredTables) {
+      db.execute('DROP TABLE IF EXISTS $table;');
+    }
   }
 
   static void seedStaticData(CommonDatabase db) {
@@ -282,6 +334,7 @@ class DomainDatabase {
     final now = timestamp ?? DateTime.now().millisecondsSinceEpoch;
     final comicId = comicIdFor(platform, sourceComicId);
     final tagsJson = tags == null ? null : jsonEncode(tags);
+    final normalizedTitle = _normalizeForMatch(title);
     ensureSourcePlatform(platform, timestamp: now);
     db.execute(
       '''
@@ -297,10 +350,11 @@ class DomainDatabase {
         cover_uri,
         tags_json,
         page_count,
+        normalized_title,
         created_at,
         updated_at,
         base_info_updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(comic_id) DO UPDATE SET
         title = excluded.title,
         subtitle = excluded.subtitle,
@@ -312,6 +366,7 @@ class DomainDatabase {
         cover_uri = excluded.cover_uri,
         tags_json = COALESCE(excluded.tags_json, comics.tags_json),
         page_count = COALESCE(excluded.page_count, comics.page_count),
+        normalized_title = excluded.normalized_title,
         updated_at = excluded.updated_at,
         base_info_updated_at = excluded.base_info_updated_at;
       ''',
@@ -327,6 +382,7 @@ class DomainDatabase {
         coverUri,
         tagsJson,
         pageCount,
+        normalizedTitle,
         now,
         now,
         now,
@@ -932,21 +988,19 @@ class DomainDatabase {
       return;
     }
     final normalizedAuthor = _normalizeForMatch(author ?? '');
+    // Indexed lookup on normalized_title instead of scanning every comic, so
+    // mirroring stays cheap as the library grows.
     final rows = db.select(
       '''
-      SELECT comic_id, title, author
+      SELECT comic_id, author
       FROM comics
-      WHERE comic_id != ?;
+      WHERE normalized_title = ? AND comic_id != ?;
       ''',
-      [comicId],
+      [normalizedTitle, comicId],
     );
     for (final row in rows) {
       final otherComicId = row['comic_id'] as String;
-      final otherTitle = row['title'] as String? ?? '';
       final otherAuthor = row['author'] as String? ?? '';
-      if (_normalizeForMatch(otherTitle) != normalizedTitle) {
-        continue;
-      }
       final otherNormalizedAuthor = _normalizeForMatch(otherAuthor);
       final hasAuthor =
           normalizedAuthor.isNotEmpty && otherNormalizedAuthor.isNotEmpty;
@@ -1147,6 +1201,7 @@ CREATE TABLE IF NOT EXISTS comics (
   cover_uri TEXT,
   tags_json TEXT,
   page_count INTEGER,
+  normalized_title TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   base_info_updated_at INTEGER NOT NULL DEFAULT 0
@@ -1178,16 +1233,6 @@ CREATE TABLE IF NOT EXISTS work_sources (
   updated_at INTEGER NOT NULL,
   PRIMARY KEY (work_id, comic_id),
   FOREIGN KEY (work_id) REFERENCES works(work_id) ON DELETE CASCADE,
-  FOREIGN KEY (comic_id) REFERENCES comics(comic_id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS comic_titles (
-  comic_title_id INTEGER PRIMARY KEY AUTOINCREMENT,
-  comic_id TEXT NOT NULL,
-  title TEXT NOT NULL,
-  title_kind TEXT NOT NULL DEFAULT 'primary',
-  sort_order INTEGER NOT NULL DEFAULT 0,
-  UNIQUE (comic_id, title, title_kind),
   FOREIGN KEY (comic_id) REFERENCES comics(comic_id) ON DELETE CASCADE
 );
 
@@ -1240,16 +1285,6 @@ CREATE TABLE IF NOT EXISTS local_library_items (
   FOREIGN KEY (comic_id) REFERENCES comics(comic_id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS import_batches (
-  import_batch_id INTEGER PRIMARY KEY AUTOINCREMENT,
-  local_item_id INTEGER NOT NULL,
-  source_path TEXT NOT NULL,
-  imported_at INTEGER NOT NULL,
-  metadata_json TEXT,
-  FOREIGN KEY (local_item_id) REFERENCES local_library_items(local_item_id)
-    ON DELETE CASCADE
-);
-
 CREATE TABLE IF NOT EXISTS chapters (
   chapter_id TEXT PRIMARY KEY,
   comic_id TEXT NOT NULL,
@@ -1291,102 +1326,11 @@ CREATE TABLE IF NOT EXISTS chapter_sources (
     ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS page_sources (
-  page_source_id INTEGER PRIMARY KEY AUTOINCREMENT,
-  page_id TEXT NOT NULL,
-  chapter_source_id INTEGER NOT NULL,
-  source_page_id TEXT,
-  source_page_index INTEGER NOT NULL,
-  source_uri TEXT,
-  UNIQUE (chapter_source_id, source_page_index),
-  FOREIGN KEY (page_id) REFERENCES pages(page_id) ON DELETE CASCADE,
-  FOREIGN KEY (chapter_source_id) REFERENCES chapter_sources(chapter_source_id)
-    ON DELETE CASCADE
-);
-
 CREATE TABLE IF NOT EXISTS tags (
   tag_id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
   translated_name TEXT,
   created_at INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS comic_tags (
-  comic_id TEXT NOT NULL,
-  tag_id INTEGER NOT NULL,
-  PRIMARY KEY (comic_id, tag_id),
-  FOREIGN KEY (comic_id) REFERENCES comics(comic_id) ON DELETE CASCADE,
-  FOREIGN KEY (tag_id) REFERENCES tags(tag_id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS chapter_collections (
-  chapter_collection_id TEXT PRIMARY KEY,
-  comic_id TEXT NOT NULL,
-  title TEXT NOT NULL,
-  sort_order INTEGER NOT NULL DEFAULT 0,
-  FOREIGN KEY (comic_id) REFERENCES comics(comic_id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS chapter_collection_items (
-  chapter_collection_id TEXT NOT NULL,
-  chapter_id TEXT NOT NULL,
-  sort_order INTEGER NOT NULL,
-  PRIMARY KEY (chapter_collection_id, chapter_id),
-  FOREIGN KEY (chapter_collection_id)
-    REFERENCES chapter_collections(chapter_collection_id) ON DELETE CASCADE,
-  FOREIGN KEY (chapter_id) REFERENCES chapters(chapter_id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS page_orders (
-  page_order_id TEXT PRIMARY KEY,
-  comic_id TEXT NOT NULL,
-  title TEXT NOT NULL,
-  order_kind TEXT NOT NULL DEFAULT 'user'
-    CHECK (order_kind IN ('source', 'import', 'user')),
-  created_at INTEGER NOT NULL,
-  FOREIGN KEY (comic_id) REFERENCES comics(comic_id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS page_order_items (
-  page_order_id TEXT NOT NULL,
-  page_id TEXT NOT NULL,
-  sort_order INTEGER NOT NULL,
-  PRIMARY KEY (page_order_id, page_id),
-  FOREIGN KEY (page_order_id) REFERENCES page_orders(page_order_id)
-    ON DELETE CASCADE,
-  FOREIGN KEY (page_id) REFERENCES pages(page_id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS reader_sessions (
-  reader_session_id TEXT PRIMARY KEY,
-  comic_id TEXT NOT NULL,
-  current_chapter_id TEXT,
-  current_page_id TEXT,
-  page_order_id TEXT,
-  updated_at INTEGER NOT NULL,
-  FOREIGN KEY (comic_id) REFERENCES comics(comic_id) ON DELETE CASCADE,
-  FOREIGN KEY (current_chapter_id) REFERENCES chapters(chapter_id)
-    ON DELETE SET NULL,
-  FOREIGN KEY (current_page_id) REFERENCES pages(page_id) ON DELETE SET NULL,
-  FOREIGN KEY (page_order_id) REFERENCES page_orders(page_order_id)
-    ON DELETE SET NULL
-);
-
-CREATE TABLE IF NOT EXISTS reader_tabs (
-  reader_tab_id TEXT PRIMARY KEY,
-  reader_session_id TEXT NOT NULL,
-  comic_id TEXT NOT NULL,
-  chapter_id TEXT,
-  page_id TEXT,
-  page_order_id TEXT,
-  updated_at INTEGER NOT NULL,
-  FOREIGN KEY (reader_session_id) REFERENCES reader_sessions(reader_session_id)
-    ON DELETE CASCADE,
-  FOREIGN KEY (comic_id) REFERENCES comics(comic_id) ON DELETE CASCADE,
-  FOREIGN KEY (chapter_id) REFERENCES chapters(chapter_id) ON DELETE SET NULL,
-  FOREIGN KEY (page_id) REFERENCES pages(page_id) ON DELETE SET NULL,
-  FOREIGN KEY (page_order_id) REFERENCES page_orders(page_order_id)
-    ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS history_events (
@@ -1411,24 +1355,6 @@ CREATE TABLE IF NOT EXISTS favorites (
   FOREIGN KEY (comic_id) REFERENCES comics(comic_id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS remote_match_candidates (
-  remote_match_candidate_id INTEGER PRIMARY KEY AUTOINCREMENT,
-  comic_id TEXT NOT NULL,
-  platform_id TEXT NOT NULL,
-  source_comic_id TEXT NOT NULL,
-  source_url TEXT,
-  title TEXT,
-  cover_uri TEXT,
-  score REAL,
-  status TEXT NOT NULL DEFAULT 'pending'
-    CHECK (status IN ('pending', 'accepted', 'rejected')),
-  created_at INTEGER NOT NULL,
-  resolved_at INTEGER,
-  UNIQUE (comic_id, platform_id, source_comic_id),
-  FOREIGN KEY (comic_id) REFERENCES comics(comic_id) ON DELETE CASCADE,
-  FOREIGN KEY (platform_id) REFERENCES source_platforms(platform_id)
-);
-
 CREATE INDEX IF NOT EXISTS idx_comic_sources_comic_id
   ON comic_sources(comic_id);
 CREATE INDEX IF NOT EXISTS idx_work_sources_comic_id
@@ -1439,10 +1365,6 @@ CREATE INDEX IF NOT EXISTS idx_chapters_comic_id
   ON chapters(comic_id, chapter_index);
 CREATE INDEX IF NOT EXISTS idx_pages_chapter_id
   ON pages(chapter_id, page_index);
-CREATE INDEX IF NOT EXISTS idx_page_order_items_order
-  ON page_order_items(page_order_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_history_events_comic_time
   ON history_events(comic_id, occurred_at);
-CREATE INDEX IF NOT EXISTS idx_remote_match_candidates_comic_status
-  ON remote_match_candidates(comic_id, status);
 ''';

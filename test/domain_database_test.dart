@@ -17,6 +17,63 @@ void main() {
     }
   });
 
+  test('drops retired tables when upgrading an existing database', () async {
+    final tempDir = Directory.systemTemp.createTempSync('venera_domain_db_');
+    final dbPath = DomainDatabase.databasePathFor(tempDir.path);
+    File(dbPath).parent.createSync(recursive: true);
+    final legacyDb = sqlite3.open(dbPath);
+    legacyDb.execute('''
+      CREATE TABLE comics (
+        comic_id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        created_at INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE page_orders (page_order_id TEXT PRIMARY KEY);
+      CREATE TABLE reader_sessions (reader_session_id TEXT PRIMARY KEY);
+      CREATE TABLE remote_match_candidates (
+        remote_match_candidate_id INTEGER PRIMARY KEY
+      );
+      CREATE TABLE comic_titles (comic_title_id INTEGER PRIMARY KEY);
+      ''');
+    legacyDb.execute(
+      "INSERT INTO comics (comic_id, title) VALUES ('local:a', 'Kept Title');",
+    );
+    legacyDb.dispose();
+    final domain = DomainDatabase();
+
+    try {
+      await domain.init(tempDir.path);
+      final db = domain.db;
+      final tables = db
+          .select("SELECT name FROM sqlite_master WHERE type = 'table';")
+          .map((row) => row['name'] as String)
+          .toSet();
+
+      expect(
+        tables.intersection({
+          'page_orders',
+          'reader_sessions',
+          'remote_match_candidates',
+          'comic_titles',
+        }),
+        isEmpty,
+      );
+      // Pre-existing rows survive the upgrade and gain a normalized title.
+      expect(
+        db
+            .select(
+              "SELECT normalized_title FROM comics WHERE comic_id = 'local:a';",
+            )
+            .single['normalized_title'],
+        'kepttitle',
+      );
+    } finally {
+      domain.close();
+      tempDir.deleteSync(recursive: true);
+    }
+  });
+
   test('opens canonical database with baseline pragmas and schema', () async {
     final tempDir = Directory.systemTemp.createTempSync('venera_domain_db_');
     final domain = DomainDatabase();
@@ -45,17 +102,23 @@ void main() {
           'comics',
           'works',
           'work_sources',
-          'comic_titles',
           'comic_sources',
           'source_tags',
           'comic_source_tags',
           'local_library_items',
-          'import_batches',
           'chapters',
           'pages',
           'chapter_sources',
-          'page_sources',
           'tags',
+          'history_events',
+          'favorites',
+        }),
+      );
+      expect(
+        tables.intersection({
+          'comic_titles',
+          'import_batches',
+          'page_sources',
           'comic_tags',
           'chapter_collections',
           'chapter_collection_items',
@@ -63,10 +126,9 @@ void main() {
           'page_order_items',
           'reader_sessions',
           'reader_tabs',
-          'history_events',
-          'favorites',
           'remote_match_candidates',
         }),
+        isEmpty,
       );
       expect(
         db.select('''
