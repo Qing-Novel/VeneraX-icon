@@ -969,6 +969,20 @@ class _SourceLibrariesPageState extends State<SourceLibrariesPage> {
     return "Last checked: @t".tlParams({"t": stamp});
   }
 
+  /// Number of installed sources this library provides (by recorded origin or
+  /// current offering provenance).
+  int _sourceCountFor(ComicSourceLibrary library) {
+    var count = 0;
+    for (final source in ComicSource.all()) {
+      final prov = ComicSourceManager().provenanceFor(source.key);
+      if (prov == null) continue;
+      if (prov.originId == library.id || prov.libraryIds.contains(library.id)) {
+        count++;
+      }
+    }
+    return count;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1045,27 +1059,7 @@ class _SourceLibrariesPageState extends State<SourceLibrariesPage> {
                   ),
                 ),
               ),
-              // Priority rank badge.
-              Container(
-                width: 24,
-                height: 24,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: disabled
-                      ? context.colorScheme.surfaceContainerHighest
-                      : context.colorScheme.primaryContainer,
-                  shape: BoxShape.circle,
-                ),
-                child: Text(
-                  "${index + 1}",
-                  style: ts.s12.copyWith(
-                    color: disabled
-                        ? context.colorScheme.outline
-                        : context.colorScheme.onPrimaryContainer,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 8),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1109,6 +1103,33 @@ class _SourceLibrariesPageState extends State<SourceLibrariesPage> {
                   ],
                 ),
               ),
+              const SizedBox(width: 8),
+              // Source-count badge.
+              Tooltip(
+                message: "@c sources".tlParams({"c": _sourceCountFor(library)}),
+                child: Container(
+                  width: 24,
+                  height: 24,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: disabled
+                        ? context.colorScheme.surfaceContainerHighest
+                        : context.colorScheme.primaryContainer,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Text(
+                    "${_sourceCountFor(library)}",
+                    textAlign: TextAlign.center,
+                    style: ts.s12.copyWith(
+                      height: 1.0,
+                      color: disabled
+                          ? context.colorScheme.outline
+                          : context.colorScheme.onPrimaryContainer,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 4),
               Tooltip(
                 message: library.enabled
                     ? "Enabled".tl
@@ -1502,7 +1523,7 @@ class _SliverComicSourceState extends State<_SliverComicSource> {
                 });
               },
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+                padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -1520,6 +1541,30 @@ class _SliverComicSourceState extends State<_SliverComicSource> {
                         _versionChip(source.version),
                         if (hasUpdate) _updateChip(newVersion).paddingLeft(6),
                         const Spacer(),
+                        _actionButton(
+                          icon: Icons.edit_note,
+                          tooltip: "Edit".tl,
+                          onPressed: () => widget.edit(source),
+                        ),
+                        _actionButton(
+                          icon: Icons.update,
+                          tooltip: "Update".tl,
+                          onPressed: () => widget.update(source),
+                          highlight: hasUpdate,
+                        ),
+                        if (_offeringLibraries().length > 1)
+                          _actionButton(
+                            icon: Icons.account_tree_outlined,
+                            tooltip: "Update from another library".tl,
+                            onPressed: _showLibraryPicker,
+                          ),
+                        _actionButton(
+                          icon: Icons.delete_outline,
+                          tooltip: "Delete".tl,
+                          onPressed: () => widget.delete(source),
+                          color: context.colorScheme.error,
+                        ),
+                        const SizedBox(width: 2),
                         Icon(
                           _expanded ? Icons.expand_less : Icons.expand_more,
                           color: context.colorScheme.outline,
@@ -1528,7 +1573,7 @@ class _SliverComicSourceState extends State<_SliverComicSource> {
                     ),
                     if (provenanceText != null || newerHint != null)
                       Padding(
-                        padding: const EdgeInsets.only(top: 8),
+                        padding: const EdgeInsets.only(top: 6),
                         child: Wrap(
                           spacing: 6,
                           runSpacing: 6,
@@ -1550,41 +1595,6 @@ class _SliverComicSourceState extends State<_SliverComicSource> {
                       ),
                   ],
                 ),
-              ),
-            ),
-            Container(
-              height: 0.6,
-              color: context.colorScheme.outlineVariant.toOpacity(0.5),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  _actionButton(
-                    icon: Icons.edit_note,
-                    tooltip: "Edit".tl,
-                    onPressed: () => widget.edit(source),
-                  ),
-                  _actionButton(
-                    icon: Icons.update,
-                    tooltip: "Update".tl,
-                    onPressed: () => widget.update(source),
-                    highlight: hasUpdate,
-                  ),
-                  if (_offeringLibraries().length > 1)
-                    _actionButton(
-                      icon: Icons.account_tree_outlined,
-                      tooltip: "Update from another library".tl,
-                      onPressed: _showLibraryPicker,
-                    ),
-                  _actionButton(
-                    icon: Icons.delete_outline,
-                    tooltip: "Delete".tl,
-                    onPressed: () => widget.delete(source),
-                    color: context.colorScheme.error,
-                  ),
-                ],
               ),
             ),
             if (_expanded) ...[
