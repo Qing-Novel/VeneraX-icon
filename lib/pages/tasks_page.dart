@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:venera/components/components.dart';
 import 'package:venera/foundation/comic_source_update_tasks.dart';
 import 'package:venera/foundation/context.dart';
+import 'package:venera/foundation/data_sync_tasks.dart';
 import 'package:venera/foundation/export_tasks.dart';
 import 'package:venera/foundation/follow_update_tasks.dart';
 import 'package:venera/foundation/import_tasks.dart';
@@ -28,6 +29,7 @@ class _TasksPageState extends State<TasksPage> {
   final comicSourceUpdateManager = ComicSourceUpdateTaskManager.instance;
   final importManager = ImportTaskManager.instance;
   final exportManager = ExportTaskManager.instance;
+  final dataSyncManager = DataSyncTaskManager.instance;
 
   @override
   void initState() {
@@ -39,6 +41,7 @@ class _TasksPageState extends State<TasksPage> {
     comicSourceUpdateManager.addListener(update);
     importManager.addListener(update);
     exportManager.addListener(update);
+    dataSyncManager.addListener(update);
   }
 
   @override
@@ -50,6 +53,7 @@ class _TasksPageState extends State<TasksPage> {
     comicSourceUpdateManager.removeListener(update);
     importManager.removeListener(update);
     exportManager.removeListener(update);
+    dataSyncManager.removeListener(update);
     super.dispose();
   }
 
@@ -88,6 +92,9 @@ class _TasksPageState extends State<TasksPage> {
 
   Widget buildCurrentTasks() {
     var widgets = <Widget>[
+      ...dataSyncManager.currentTasks.map(
+        (task) => buildDataSyncTaskCard(task, expanded: false),
+      ),
       ...followUpdateManager.currentTasks.map(
         (task) => buildFollowUpdateTaskCard(task, expanded: false),
       ),
@@ -115,6 +122,12 @@ class _TasksPageState extends State<TasksPage> {
 
   Widget buildHistoryTasks() {
     var entries = <MapEntry<DateTime, Widget>>[
+      ...dataSyncManager.historyTasks.map(
+        (task) => MapEntry(
+          task.finishedAt ?? task.createdAt,
+          buildDataSyncTaskCard(task, expanded: false),
+        ),
+      ),
       ...followUpdateManager.historyTasks.map(
         (task) => MapEntry(
           task.finishedAt ?? task.createdAt,
@@ -181,12 +194,34 @@ class _TasksPageState extends State<TasksPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(parts.join(" · "), maxLines: 1, overflow: TextOverflow.ellipsis),
-        Text(
-          taskTimeText(createdAt, finishedAt),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: ts.s12.withColor(context.colorScheme.onSurfaceVariant),
+        // 任务状态和进度信息使用自适应布局
+        LayoutBuilder(
+          builder: (context, constraints) {
+            // 在窄屏幕上每行显示更少信息，避免省略号
+            final displayParts = constraints.maxWidth < 300
+                ? parts.take(2).toList()
+                : parts;
+            return Text(
+              displayParts.join(" · "),
+              maxLines: constraints.maxWidth < 250 ? 2 : 1,
+              overflow: TextOverflow.ellipsis,
+            );
+          },
+        ),
+        const SizedBox(height: 2),
+        // 时间信息使用更紧凑的格式
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final timeText = constraints.maxWidth < 400
+                ? taskTimeTextCompact(createdAt, finishedAt)
+                : taskTimeText(createdAt, finishedAt);
+            return Text(
+              timeText,
+              maxLines: constraints.maxWidth < 300 ? 2 : 1,
+              overflow: TextOverflow.ellipsis,
+              style: ts.s12.withColor(context.colorScheme.onSurfaceVariant),
+            );
+          },
         ),
       ],
     );
@@ -201,8 +236,27 @@ class _TasksPageState extends State<TasksPage> {
     ].join(" · ");
   }
 
+  String taskTimeTextCompact(DateTime createdAt, DateTime? finishedAt) {
+    return [
+      "Start: @time".tlParams({'time': formatTaskTimeCompact(createdAt)}),
+      if (finishedAt != null)
+        "End: @time".tlParams({'time': formatTaskTimeCompact(finishedAt)}),
+    ].join("\n");
+  }
+
   String formatTaskTime(DateTime time) {
     return DateFormat('yyyy-MM-dd HH:mm:ss').format(time);
+  }
+
+  String formatTaskTimeCompact(DateTime time) {
+    final now = DateTime.now();
+    final diff = now.difference(time);
+    if (diff.inDays == 0) {
+      return DateFormat('HH:mm:ss').format(time);
+    } else if (diff.inDays < 7) {
+      return DateFormat('MM-dd HH:mm').format(time);
+    }
+    return DateFormat('yyyy-MM-dd').format(time);
   }
 
   Widget buildFollowUpdateTaskCard(
@@ -1058,5 +1112,108 @@ class _TasksPageState extends State<TasksPage> {
       'failed' => "Failed".tl,
       _ => status,
     };
+  }
+
+  Widget buildDataSyncTaskCard(DataSyncTask task, {required bool expanded}) {
+    var progressText = "${(task.progress * 100).clamp(0, 100).toStringAsFixed(0)}%";
+    return Card(
+      elevation: 0,
+      color: context.colorScheme.surface,
+      margin: const EdgeInsets.only(bottom: 8),
+      child: ExpansionTile(
+        initiallyExpanded: expanded,
+        leading: Icon(
+          task.isRunning
+              ? (task.type == DataSyncTaskType.upload
+                  ? Icons.cloud_upload
+                  : Icons.cloud_download)
+              : Icons.history,
+        ),
+        title: Text(
+          task.type == DataSyncTaskType.upload
+              ? "Uploading data to WebDAV".tl
+              : "Downloading data from WebDAV".tl,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: buildTaskSubtitle(
+          [
+            dataSyncStatusText(task),
+            if (task.currentPhase != null) task.currentPhase!.tl,
+            progressText,
+          ],
+          task.createdAt,
+          task.finishedAt,
+        ),
+        trailing: null, // WebDAV sync cannot be canceled mid-operation
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: LinearProgressIndicator(
+              value: task.isRunning ? task.progress : 1.0,
+            ),
+          ),
+          const SizedBox(height: 8),
+          buildDataSyncDetails(task),
+        ],
+      ),
+    );
+  }
+
+  String dataSyncStatusText(DataSyncTask task) {
+    return switch (task.status) {
+      DataSyncTaskStatus.running => "Running".tl,
+      DataSyncTaskStatus.completed => "Completed".tl,
+      DataSyncTaskStatus.failed => "Failed".tl,
+      DataSyncTaskStatus.canceled => "Canceled".tl,
+    };
+  }
+
+  Widget buildDataSyncDetails(DataSyncTask task) {
+    return buildSourceBox(
+      title: "Details".tl,
+      children: [
+        Text(
+          "Type: @type".tlParams({
+            'type': (task.type == DataSyncTaskType.upload ? 'Upload' : 'Download').tl,
+          }),
+          style: ts.s14,
+        ),
+        if (task.fileName != null) ...[
+          const SizedBox(height: 2),
+          Text(
+            "File: @file".tlParams({'file': task.fileName!}),
+            style: ts.s14,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+        if (task.fileSize != null && task.fileSize! > 0) ...[
+          const SizedBox(height: 2),
+          Text(
+            "Size: @size".tlParams({
+              'size': bytesToReadableString(task.fileSize!),
+            }),
+            style: ts.s14,
+          ),
+        ],
+        if (task.currentPhase != null) ...[
+          const SizedBox(height: 2),
+          Text(
+            "Phase: @phase".tlParams({'phase': task.currentPhase!.tl}),
+            style: ts.s14,
+          ),
+        ],
+        if (task.status == DataSyncTaskStatus.failed && task.error != null) ...[
+          const SizedBox(height: 2),
+          Text(
+            task.error!,
+            style: ts.s14.withColor(context.colorScheme.error),
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ],
+    );
   }
 }

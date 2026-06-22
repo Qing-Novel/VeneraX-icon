@@ -6,6 +6,7 @@ import 'package:venera/components/window_frame.dart';
 import 'package:venera/foundation/app.dart';
 import 'package:venera/foundation/appdata.dart';
 import 'package:venera/foundation/comic_source/comic_source.dart';
+import 'package:venera/foundation/data_sync_tasks.dart';
 import 'package:venera/foundation/favorites.dart';
 import 'package:venera/foundation/read_later.dart';
 import 'package:venera/foundation/log.dart';
@@ -256,18 +257,28 @@ class DataSync with ChangeNotifier {
     _isUploading = true;
     _lastError = null;
     notifyListeners();
+
+    // Create task for UI
+    final taskManager = DataSyncTaskManager.instance;
+    final task = taskManager.createTask(DataSyncTaskType.upload);
+
     try {
+      taskManager.updateTask(task.id, currentPhase: 'Validating', progress: 0.0);
+
       if (!_hasCompletedInitialSync()) {
         _lastError = 'Please complete initial sync download first';
         _addSyncLog('upload', null, false, 'Blocked: initial sync not completed');
+        taskManager.failTask(task.id, 'Initial sync not completed');
         return const Res.error('Initial sync not completed');
       }
       var config = _validateConfig();
       if (config == null) {
         _lastError = 'Invalid WebDAV configuration';
+        taskManager.failTask(task.id, 'Invalid WebDAV configuration');
         return const Res.error('Invalid WebDAV configuration');
       }
       if (config.isEmpty) {
+        taskManager.cancelTask(task.id);
         return const Res(true);
       }
       String url = config[0];
@@ -277,13 +288,17 @@ class DataSync with ChangeNotifier {
       if (!_isFavoriteDbValid()) {
         _lastError = 'Favorite database is empty, upload blocked';
         _addSyncLog('upload', null, false, 'Blocked: local_favorite.db empty');
+        taskManager.failTask(task.id, 'Favorite database is empty');
         return const Res.error('Favorite database is empty');
       }
       if (_isFollowFolderEmpty()) {
         _lastError = 'Follow folder is empty, auto-upload blocked';
         _addSyncLog('upload', null, false, 'Blocked: follow folder empty');
+        taskManager.failTask(task.id, 'Follow folder is empty');
         return const Res.error('Follow folder is empty');
       }
+
+      taskManager.updateTask(task.id, currentPhase: 'Preparing', progress: 0.1);
 
       var client = newClient(
         url,
@@ -298,15 +313,28 @@ class DataSync with ChangeNotifier {
       try {
         appdata.settings['dataVersion'] = nextVersion;
         await appdata.saveData(false);
+
+        taskManager.updateTask(task.id, currentPhase: 'Exporting', progress: 0.3);
         data = await exportAppData(
           appdata.settings['disableSyncFields'].toString().isNotEmpty,
         );
+
+        final fileSize = await data.length();
         var time = (DateTime.now().millisecondsSinceEpoch ~/ 86400000)
             .toString();
         var filename = time;
         filename += '-';
         filename += nextVersion.toString();
         filename += '.${_platformTag()}.venera';
+
+        taskManager.updateTask(
+          task.id,
+          currentPhase: 'Uploading',
+          progress: 0.5,
+          fileName: filename,
+          fileSize: fileSize,
+        );
+
         var files = await client.readDir('/');
         files = files.where((e) => e.name!.endsWith('.venera')).toList();
         var old = files.firstWhereOrNull((e) => e.name!.startsWith("$time-"));
@@ -317,10 +345,14 @@ class DataSync with ChangeNotifier {
           files.sort((a, b) => a.name!.compareTo(b.name!));
           await client.remove(files.first.name!);
         }
+
+        taskManager.updateTask(task.id, currentPhase: 'Uploading', progress: 0.7);
         await client.write(filename, await data.readAsBytes());
         data.deleteIgnoreError();
+
         Log.info("Upload Data", "Data uploaded successfully");
         _addSyncLog('upload', filename, true, null);
+        taskManager.completeTask(task.id, fileName: filename);
         _scheduleImageSync();
         return const Res(true);
       } catch (e, s) {
@@ -329,6 +361,7 @@ class DataSync with ChangeNotifier {
         Log.error("Upload Data", e, s);
         _lastError = e.toString();
         _addSyncLog('upload', null, false, e.toString());
+        taskManager.failTask(task.id, e.toString());
         return Res.error(e.toString());
       } finally {
         data?.deleteIgnoreError();
@@ -349,13 +382,22 @@ class DataSync with ChangeNotifier {
     _isDownloading = true;
     _lastError = null;
     notifyListeners();
+
+    // Create task for UI
+    final taskManager = DataSyncTaskManager.instance;
+    final task = taskManager.createTask(DataSyncTaskType.download);
+
     try {
+      taskManager.updateTask(task.id, currentPhase: 'Validating', progress: 0.0);
+
       var config = _validateConfig();
       if (config == null) {
         _lastError = 'Invalid WebDAV configuration';
+        taskManager.failTask(task.id, 'Invalid WebDAV configuration');
         return const Res.error('Invalid WebDAV configuration');
       }
       if (config.isEmpty) {
+        taskManager.cancelTask(task.id);
         return const Res(true);
       }
       String url = config[0];
@@ -370,9 +412,12 @@ class DataSync with ChangeNotifier {
       );
 
       try {
+        taskManager.updateTask(task.id, currentPhase: 'Checking', progress: 0.1);
+
         var files = await client.readDir('/');
         var file = _latestBackup(files, (e) => e.name);
         if (file == null) {
+          taskManager.failTask(task.id, 'No data file found');
           throw 'No data file found';
         }
         var remoteVersion = _versionOfFileName(file.name!);
@@ -382,37 +427,52 @@ class DataSync with ChangeNotifier {
           if (!_hasCompletedInitialSync()) {
             _markInitialSyncCompleted();
           }
+          taskManager.completeTask(task.id, fileName: file.name);
           return const Res(true);
         }
+
+        taskManager.updateTask(
+          task.id,
+          currentPhase: 'Downloading',
+          progress: 0.2,
+          fileName: file.name,
+          fileSize: file.size ?? 0,
+        );
+
         Log.info("Data Sync", "Downloading data from WebDAV server");
         var localFile = File(FilePath.join(App.cachePath, file.name!));
         try {
           await client.read2File(file.name!, localFile.path);
-          await importAppData(localFile, checkVersion: true);
+
+          taskManager.updateTask(task.id, currentPhase: 'Applying', progress: 0.6);
+
+          await importAppData(localFile);
+          if (!_hasCompletedInitialSync()) {
+            _markInitialSyncCompleted();
+          }
+          _addSyncLog('download', file.name, true, null);
+          taskManager.completeTask(task.id, fileName: file.name);
+          // Align the local version with the backup we just imported. Without
+          // this, the downloading device keeps its old (lower) dataVersion and
+          // can later be treated as "newer" than the remote, reversing the sync
+          // direction and overwriting good data with the stale local copy.
+          if (remoteVersion > _dataVersion()) {
+            appdata.settings['dataVersion'] = remoteVersion;
+            await appdata.saveData(false);
+          }
+
+          if (_shouldSyncImages()) {
+            _scheduleImageSync();
+          }
+          return const Res(true);
         } finally {
           localFile.deleteIgnoreError();
         }
-        // Align the local version with the backup we just imported. Without
-        // this, the downloading device keeps its old (lower) dataVersion and
-        // can later be treated as "newer" than the remote, reversing the sync
-        // direction and overwriting good data with the stale local copy.
-        if (remoteVersion > _dataVersion()) {
-          appdata.settings['dataVersion'] = remoteVersion;
-          await appdata.saveData(false);
-        }
-        Log.info("Data Sync", "Data downloaded successfully");
-        _addSyncLog('download', null, true, null);
-        if (!_hasCompletedInitialSync()) {
-          _markInitialSyncCompleted();
-        }
-        if (_shouldSyncImages()) {
-          _scheduleImageSync();
-        }
-        return const Res(true);
       } catch (e, s) {
         Log.error("Data Sync", e, s);
         _lastError = e.toString();
         _addSyncLog('download', null, false, e.toString());
+        taskManager.failTask(task.id, e.toString());
         return Res.error(e.toString());
       }
     } finally {
