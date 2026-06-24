@@ -1,5 +1,6 @@
 import subprocess
 import os
+import time
 import httpx
 
 file = open('pubspec.yaml', 'r')
@@ -39,12 +40,35 @@ try:
     file.close()
 
     if not os.path.exists("windows/ChineseSimplified.isl"):
-        # download ChineseSimplified.isl
-        url = "https://cdn.jsdelivr.net/gh/kira-96/Inno-Setup-Chinese-Simplified-Translation@latest/ChineseSimplified.isl"
-        response = httpx.get(url)
-        response.raise_for_status()
-        with open('windows/ChineseSimplified.isl', 'wb') as file:
-            file.write(response.content)
+        # Download the Inno Setup Simplified Chinese translation (a release-only
+        # asset). The jsDelivr CDN occasionally times out (httpx.ReadTimeout),
+        # which would fail the whole Windows release build even though the app
+        # itself already built. Retry with an explicit timeout and fall back to
+        # GitHub raw before giving up, instead of a single bare httpx.get.
+        urls = [
+            "https://cdn.jsdelivr.net/gh/kira-96/Inno-Setup-Chinese-Simplified-Translation@latest/ChineseSimplified.isl",
+            "https://raw.githubusercontent.com/kira-96/Inno-Setup-Chinese-Simplified-Translation/main/ChineseSimplified.isl",
+        ]
+        isl_content = None
+        last_error = None
+        for attempt in range(6):
+            target = urls[attempt % len(urls)]
+            try:
+                response = httpx.get(target, timeout=30.0, follow_redirects=True)
+                response.raise_for_status()
+                isl_content = response.content
+                break
+            except Exception as error:
+                last_error = error
+                print(f"ChineseSimplified.isl download attempt {attempt + 1} "
+                      f"from {target} failed: {error}")
+                time.sleep(3)
+        if isl_content is None:
+            raise RuntimeError(
+                "Failed to download ChineseSimplified.isl after retries: "
+                f"{last_error}")
+        with open('windows/ChineseSimplified.isl', 'wb') as out_file:
+            out_file.write(isl_content)
 
     subprocess.run(["iscc", "windows/build.iss"], shell=True, check=True)
 finally:
