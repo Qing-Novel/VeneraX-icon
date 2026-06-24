@@ -670,15 +670,15 @@ class LocalManager with ChangeNotifier {
     downloadingTasks.remove(task);
     notifyListeners();
     saveCurrentDownloadingTasks();
-    downloadingTasks.firstOrNull?.resume();
-    DownloadKeepAlive.instance.refresh();
+    _advanceQueue();
   }
 
   void removeTask(DownloadTask task) {
     downloadingTasks.remove(task);
     notifyListeners();
     saveCurrentDownloadingTasks();
-    DownloadKeepAlive.instance.refresh();
+    // Advance so cancelling the active task doesn't stall the rest of the queue.
+    _advanceQueue();
   }
 
   void moveToFirst(DownloadTask task) {
@@ -694,6 +694,65 @@ class LocalManager with ChangeNotifier {
       }
       DownloadKeepAlive.instance.refresh();
     }
+  }
+
+  static const _maxAutoRetry = 3;
+
+  /// Invoked by a task when it enters the error state. Keeps the queue moving:
+  /// the failed task is parked at the end so a persistent failure can't block
+  /// healthy tasks, then the next runnable task starts. A few bounded, delayed
+  /// auto-retries are attempted before leaving it for the user (#7).
+  void onTaskError(DownloadTask task) {
+    if (!downloadingTasks.contains(task)) return;
+    if (downloadingTasks.length > 1 && downloadingTasks.first == task) {
+      downloadingTasks.remove(task);
+      downloadingTasks.add(task);
+    }
+    notifyListeners();
+    saveCurrentDownloadingTasks();
+    _advanceQueue();
+  }
+
+  /// Ensure a runnable task is downloading. Serial model: resume the first
+  /// non-error task (Phase 3 generalizes to N parallel). If every task has
+  /// errored, give the least-tried one a delayed auto-retry until the cap.
+  ///
+  /// NOTE: it can't yet tell a user-paused task from a queued one, so the rare
+  /// "cancel a queued task while the head is user-paused" case may resume the
+  /// head. Per-task user-pause tracking lands with the Phase 6 controls.
+  void _advanceQueue() {
+    if (downloadingTasks.isEmpty) {
+      DownloadKeepAlive.instance.refresh();
+      return;
+    }
+    final next = downloadingTasks.where((t) => !t.isError).firstOrNull;
+    if (next != null) {
+      if (next.isPaused) next.resume();
+      DownloadKeepAlive.instance.refresh();
+      return;
+    }
+    // Every task has errored — schedule one bounded, delayed auto-retry of the
+    // least-tried task.
+    DownloadTask? candidate;
+    for (final t in downloadingTasks) {
+      if (t.autoRetryCount >= _maxAutoRetry) continue;
+      if (candidate == null || t.autoRetryCount < candidate.autoRetryCount) {
+        candidate = t;
+      }
+    }
+    if (candidate == null) {
+      DownloadKeepAlive.instance.refresh();
+      return; // gave up; the user can retry manually
+    }
+    final task = candidate;
+    task.autoRetryCount++;
+    final delay = Duration(seconds: 15 * task.autoRetryCount); // 15s/30s/45s
+    Future.delayed(delay, () {
+      if (!downloadingTasks.contains(task) || !task.isError) return;
+      if (downloadingTasks.any((t) => !t.isPaused && !t.isError)) return;
+      task.resume();
+      DownloadKeepAlive.instance.refresh();
+    });
   }
 
   Timer? _saveDebounce;
@@ -778,8 +837,7 @@ class LocalManager with ChangeNotifier {
     downloadingTasks.add(task);
     notifyListeners();
     saveCurrentDownloadingTasks();
-    downloadingTasks.first.resume();
-    DownloadKeepAlive.instance.refresh();
+    _advanceQueue();
   }
 
   void deleteComic(LocalComic c, [bool removeFileOnDisk = true]) {

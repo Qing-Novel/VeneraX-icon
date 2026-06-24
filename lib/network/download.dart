@@ -50,6 +50,11 @@ abstract class DownloadTask with ChangeNotifier {
   /// without reviving tasks the user had manually paused.
   bool wasRunning = false;
 
+  /// How many times the queue has auto-retried this task after it errored.
+  /// Bounded by [LocalManager] so a permanently-failing task eventually stops
+  /// retrying and waits for the user. Reset when the user retries manually.
+  int autoRetryCount = 0;
+
   /// convert current state to json, which can be used to restore the task
   Map<String, dynamic> toJson();
 
@@ -550,7 +555,7 @@ class ImagesDownloadTask extends DownloadTask with _TransferSpeedMixin {
     _message = message;
     notifyListeners();
     stopRecorder();
-    LocalManager().saveCurrentDownloadingTasks();
+    LocalManager().onTaskError(this);
   }
 
   @override
@@ -697,12 +702,25 @@ class _ImageDownloadWrapper {
 
   var retry = 3;
 
+  /// Complete every pending waiter. Critically also called on the cancelled
+  /// path: otherwise `await wait()` in the download loop and in cancel()'s
+  /// cleanup would hang forever on a cancelled image (B1).
+  void _notifyWaiters() {
+    for (var c in completers) {
+      if (!c.isCompleted) {
+        c.complete(this);
+      }
+    }
+    completers.clear();
+  }
+
   void start() async {
     int lastBytes = 0;
     try {
       await for (var p in ImageDownloader.loadComicImageUnwrapped(
           image, task.source.key, task.comicId, chapter)) {
         if (isCancelled) {
+          _notifyWaiters();
           return;
         }
         task.onData(p.currentBytes - lastBytes);
@@ -712,33 +730,33 @@ class _ImageDownloadWrapper {
           var file = saveTo.joinFile("$index${fileType.ext}");
           await file.writeAsBytes(p.imageBytes!);
           isComplete = true;
-          for (var c in completers) {
-            c.complete(this);
-          }
-          completers.clear();
+          _notifyWaiters();
         }
       }
     } catch (e, s) {
       if (isCancelled) {
+        _notifyWaiters();
         return;
       }
       Log.error("Download", e.toString(), s);
       retry--;
       if (retry > 0) {
+        // Exponential-ish backoff (1s, 2s) instead of hammering immediately.
+        await Future.delayed(Duration(seconds: 3 - retry));
+        if (isCancelled) {
+          _notifyWaiters();
+          return;
+        }
         start();
         return;
       }
       error = e.toString();
-      for (var c in completers) {
-        if (!c.isCompleted) {
-          c.complete(this);
-        }
-      }
+      _notifyWaiters();
     }
   }
 
   Future<_ImageDownloadWrapper> wait() {
-    if (isComplete) {
+    if (isComplete || isCancelled) {
       return Future.value(this);
     }
     var c = Completer<_ImageDownloadWrapper>();
@@ -822,7 +840,7 @@ class ArchiveDownloadTask extends DownloadTask {
     _message = message;
     notifyListeners();
     Log.error("Download", message);
-    LocalManager().saveCurrentDownloadingTasks();
+    LocalManager().onTaskError(this);
   }
 
   @override
