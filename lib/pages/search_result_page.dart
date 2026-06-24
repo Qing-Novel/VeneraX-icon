@@ -40,6 +40,9 @@ class _SearchResultPageState extends State<SearchResultPage> {
 
   late _SuggestionsController suggestionsController;
 
+  /// Set by [ComicList] via selectionHandlerCallback; enters multi-select mode.
+  VoidCallback? _enterSelection;
+
   void search([String? text]) {
     if (text != null) {
       if (suggestionsController.entry != null) {
@@ -139,6 +142,8 @@ class _SearchResultPageState extends State<SearchResultPage> {
     var source = ComicSource.find(sourceKey);
     return ComicList(
       key: Key(text + options.toString() + sourceKey),
+      enableSelection: true,
+      selectionHandlerCallback: (fn) => _enterSelection = fn,
       errorLeading: AppSearchBar(controller: controller, action: buildAction()),
       leadingSliver: SliverSearchBar(
         controller: controller,
@@ -159,32 +164,44 @@ class _SearchResultPageState extends State<SearchResultPage> {
   }
 
   Widget buildAction() {
-    return Tooltip(
-      message: "Settings".tl,
-      child: IconButton(
-        icon: const Icon(Icons.filter_alt_outlined),
-        onPressed: () async {
-          if (suggestionOverlay != null) {
-            suggestionsController.remove();
-          }
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Tooltip(
+          message: "Multi-Select".tl,
+          child: IconButton(
+            icon: const Icon(Icons.checklist),
+            onPressed: () => _enterSelection?.call(),
+          ),
+        ),
+        Tooltip(
+          message: "Settings".tl,
+          child: IconButton(
+            icon: const Icon(Icons.filter_alt_outlined),
+            onPressed: () async {
+              if (suggestionOverlay != null) {
+                suggestionsController.remove();
+              }
 
-          var previousOptions = List<String>.from(options);
-          var previousSourceKey = sourceKey;
-          await showDialog(
-            context: context,
-            useRootNavigator: true,
-            builder: (context) {
-              return _SearchSettingsDialog(state: this);
+              var previousOptions = List<String>.from(options);
+              var previousSourceKey = sourceKey;
+              await showDialog(
+                context: context,
+                useRootNavigator: true,
+                builder: (context) {
+                  return _SearchSettingsDialog(state: this);
+                },
+              );
+              if (!previousOptions.isEqualTo(options) ||
+                  previousSourceKey != sourceKey) {
+                text = checkAutoLanguage(controller.text);
+                controller.currentText = text;
+                setState(() {});
+              }
             },
-          );
-          if (!previousOptions.isEqualTo(options) ||
-              previousSourceKey != sourceKey) {
-            text = checkAutoLanguage(controller.text);
-            controller.currentText = text;
-            setState(() {});
-          }
-        },
-      ),
+          ),
+        ),
+      ],
     );
   }
 }

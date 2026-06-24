@@ -1615,7 +1615,9 @@ class ComicList extends StatefulWidget {
     this.menuBuilder,
     this.controller,
     this.refreshHandlerCallback,
+    this.selectionHandlerCallback,
     this.enablePageStorage = false,
+    this.enableSelection = false,
   });
 
   final Future<Res<List<Comic>>> Function(int page)? loadPage;
@@ -1634,7 +1636,19 @@ class ComicList extends StatefulWidget {
 
   final void Function(VoidCallback c)? refreshHandlerCallback;
 
+  /// Receives a callback the host can invoke to enter multi-select mode (e.g.
+  /// from a toolbar button), since long-press isn't discoverable for everyone.
+  /// Only meaningful together with [enableSelection].
+  final void Function(VoidCallback enterSelection)? selectionHandlerCallback;
+
   final bool enablePageStorage;
+
+  /// When true, comics can be multi-selected (via the long-press menu or the
+  /// host's [selectionHandlerCallback] button) to batch-favorite them; on
+  /// mobile, a left-swipe quick-favorites a single comic to the configured
+  /// Quick Favorite folder. Off by default so other ComicList pages are
+  /// unaffected.
+  final bool enableSelection;
 
   @override
   State<ComicList> createState() => ComicListState();
@@ -1654,6 +1668,157 @@ class ComicListState extends State<ComicList> {
   String? _nextUrl;
 
   late bool enablePageStorage = widget.enablePageStorage;
+
+  // ---- Multi-select (only active when widget.enableSelection) ----
+  bool _selecting = false;
+  final Map<Comic, bool> _selected = {};
+
+  /// Comics currently loaded: the current page in paging mode, every loaded
+  /// page in continuous mode. "Select all" is necessarily limited to these —
+  /// results on not-yet-loaded pages can't be selected without fetching them.
+  List<Comic> get _loadedComics {
+    final mode = appdata.settings['comicListDisplayMode'];
+    if (mode == 'paging') return _data[_page] ?? const [];
+    return _data.values.expand((e) => e).toList();
+  }
+
+  void _enterSelect(Comic c) {
+    setState(() {
+      _selecting = true;
+      _selected[c] = true;
+    });
+  }
+
+  void _toggleSelect(Comic c) {
+    setState(() {
+      // remove() returns null when the key was absent → it wasn't selected.
+      if (_selected.remove(c) == null) {
+        _selected[c] = true;
+      }
+    });
+  }
+
+  void _exitSelect() {
+    setState(() {
+      _selecting = false;
+      _selected.clear();
+    });
+  }
+
+  /// Enter selection mode without pre-selecting any comic — used by the host's
+  /// toolbar button (long-press isn't discoverable for everyone).
+  void _enterSelectMode() {
+    if (_selecting) return;
+    setState(() => _selecting = true);
+  }
+
+  /// Quick-favorite [comic] to the configured Quick Favorite folder
+  /// (Settings → Local Favorites → Quick Favorite). Falls back to the folder
+  /// picker when it isn't set or the folder no longer exists.
+  void _quickFavorite(Comic comic) {
+    final folder = appdata.settings['quickFavorite'];
+    if (folder is! String ||
+        folder.isEmpty ||
+        !LocalFavoritesManager().folderNames.contains(folder)) {
+      addFavorite([comic]);
+      return;
+    }
+    final ok = LocalFavoritesManager().addComic(
+      folder,
+      favoriteItemFromComic(comic),
+    );
+    App.rootContext.showMessage(
+      message: ok ? "Added to favorites".tl : "Already in favorites".tl,
+    );
+  }
+
+  /// Left-swipe pane that quick-favorites a single comic. Mobile only (the grid
+  /// swipe gesture is gated to mobile in SliverGridComics).
+  SwipePanes _favoriteSwipePanes(Comic comic) {
+    return (
+      start: null,
+      end: SwipePane(
+        actions: [
+          SwipeAction(
+            icon: Icons.stars_outlined,
+            label: "Add to favorites".tl,
+            onPressed: () => _quickFavorite(comic),
+            backgroundColor: context.colorScheme.primaryContainer,
+            foregroundColor: context.colorScheme.onPrimaryContainer,
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<MenuEntry> _menuBuilderWithSelect(Comic c) {
+    return [
+      MenuEntry(
+        icon: Icons.checklist,
+        text: "Multi-Select".tl,
+        onClick: () => _enterSelect(c),
+      ),
+      ...?widget.menuBuilder?.call(c),
+    ];
+  }
+
+  Widget _buildSelectAppbar() {
+    return SliverAppbar(
+      leading: Tooltip(
+        message: "Cancel".tl,
+        child: IconButton(icon: const Icon(Icons.close), onPressed: _exitSelect),
+      ),
+      title: Text(_selected.length.toString()),
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.select_all),
+          tooltip: "Select All".tl,
+          onPressed: () => setState(() {
+            for (final c in _loadedComics) {
+              _selected[c] = true;
+            }
+          }),
+        ),
+        IconButton(
+          icon: const Icon(Icons.deselect),
+          tooltip: "Deselect".tl,
+          onPressed: _selected.isEmpty
+              ? null
+              : () => setState(() => _selected.clear()),
+        ),
+        IconButton(
+          icon: const Icon(Icons.stars_outlined),
+          tooltip: "Add to favorites".tl,
+          onPressed: _selected.isEmpty
+              ? null
+              : () {
+                  addFavorite(_selected.keys.toList());
+                  _exitSelect();
+                },
+        ),
+      ],
+    );
+  }
+
+  /// SliverGridComics configured for the current (normal / selecting) mode.
+  Widget _buildGrid(List<Comic> comics, {void Function()? onLastItemBuild}) {
+    return SliverGridComics(
+      comics: comics,
+      onLastItemBuild: onLastItemBuild,
+      menuBuilder: _selecting
+          ? null
+          : (widget.enableSelection
+                ? _menuBuilderWithSelect
+                : widget.menuBuilder),
+      selections: _selecting ? _selected : null,
+      onTapWithIndex:
+          _selecting ? (comic, heroID, index) => _toggleSelect(comic) : null,
+      swipeActionBuilder:
+          (widget.enableSelection && !_selecting && App.isMobile)
+          ? _favoriteSwipePanes
+          : null,
+    );
+  }
 
   Map<String, dynamic> get state => {
     'maxPage': _maxPage,
@@ -1700,6 +1865,7 @@ class ComicListState extends State<ComicList> {
     super.didChangeDependencies();
     restoreState(PageStorage.of(context).readState(context));
     widget.refreshHandlerCallback?.call(refresh);
+    widget.selectionHandlerCallback?.call(_enterSelectMode);
   }
 
   void remove(Comic c) {
@@ -1890,7 +2056,21 @@ class ComicListState extends State<ComicList> {
   @override
   Widget build(BuildContext context) {
     var type = appdata.settings['comicListDisplayMode'];
-    return type == 'paging' ? buildPagingMode() : buildContinuousMode();
+    Widget child = type == 'paging'
+        ? buildPagingMode()
+        : buildContinuousMode();
+    if (widget.enableSelection) {
+      // While selecting, the system back gesture / button cancels selection
+      // instead of leaving the page.
+      child = PopScope(
+        canPop: !_selecting,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop && _selecting) _exitSelect();
+        },
+        child: child,
+      );
+    }
+    return child;
   }
 
   Widget buildPagingMode() {
@@ -1926,12 +2106,12 @@ class ComicListState extends State<ComicList> {
       key: enablePageStorage ? PageStorageKey('scroll$_page') : null,
       controller: widget.controller,
       slivers: [
-        if (widget.leadingSliver != null) widget.leadingSliver!,
+        if (_selecting)
+          _buildSelectAppbar()
+        else if (widget.leadingSliver != null)
+          widget.leadingSliver!,
         if (_maxPage != 1) _buildSliverPageSelector(),
-        SliverGridComics(
-          comics: _data[_page] ?? const [],
-          menuBuilder: widget.menuBuilder,
-        ),
+        _buildGrid(_data[_page] ?? const []),
         if (_data[_page]!.length > 6 && _maxPage != 1)
           _buildSliverPageSelector(),
         if (widget.trailingSliver != null) widget.trailingSliver!,
@@ -1972,10 +2152,12 @@ class ComicListState extends State<ComicList> {
       key: enablePageStorage ? PageStorageKey('scroll$_page') : null,
       controller: widget.controller,
       slivers: [
-        if (widget.leadingSliver != null) widget.leadingSliver!,
-        SliverGridComics(
-          comics: _data.values.expand((element) => element).toList(),
-          menuBuilder: widget.menuBuilder,
+        if (_selecting)
+          _buildSelectAppbar()
+        else if (widget.leadingSliver != null)
+          widget.leadingSliver!,
+        _buildGrid(
+          _data.values.expand((element) => element).toList(),
           onLastItemBuild: () {
             if (_error == null &&
                 (_maxPage == null || _data.length < _maxPage!)) {
