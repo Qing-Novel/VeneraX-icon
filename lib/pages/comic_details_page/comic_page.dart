@@ -1307,7 +1307,12 @@ class _ComicPageLoadingPlaceHolder extends StatelessWidget {
     Widget child;
     if (cover != null) {
       child = AnimatedImage(
-        image: CachedImageProvider(cover!, sourceKey: sourceKey, cid: cid),
+        image: comicDetailCoverProvider(
+          sourceKey: sourceKey,
+          id: cid,
+          cover: cover!,
+          localComic: LocalManager().find(cid, ComicType.local),
+        ),
         width: double.infinity,
         height: double.infinity,
         fit: BoxFit.cover,
