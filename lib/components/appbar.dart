@@ -864,7 +864,10 @@ class _SliverSearchBarDelegate extends SliverPersistentHeaderDelegate {
     return oldDelegate is! _SliverSearchBarDelegate ||
         editingController != oldDelegate.editingController ||
         controller != oldDelegate.controller ||
-        topPadding != oldDelegate.topPadding;
+        topPadding != oldDelegate.topPadding ||
+        action != oldDelegate.action ||
+        onChanged != oldDelegate.onChanged ||
+        focusNode != oldDelegate.focusNode;
   }
 }
 
