@@ -57,6 +57,13 @@ class DownloadKeepAlive {
   /// 注意不主动恢复用户手动暂停的任务——保活只针对正在跑的下载。
   void onResume() => refresh();
 
+  /// 弹一条一次性「下载完成」通知（Android）。其它平台无操作。
+  /// 由队列在全部任务下载完、队列清空时调用。
+  void notifyComplete(String status) {
+    if (!_supported) return;
+    _invoke('complete', {'status': status});
+  }
+
   void _teardown() {
     _ticker?.cancel();
     _ticker = null;

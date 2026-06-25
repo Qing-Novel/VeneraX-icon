@@ -217,6 +217,13 @@ class MainActivity : FlutterFragmentActivity() {
                             .onFailure { Log.w("Venera", "keepalive halt failed: ${it.message}") }
                         res.success(null)
                     }
+                    "complete" -> {
+                        // 一次性「下载完成」通知，可滑除，与常驻进度通知分属不同 id/渠道。
+                        val text = call.argument<String>("status").orEmpty()
+                        runCatching { DownloadKeepAliveService.notifyComplete(this, text) }
+                            .onFailure { Log.w("Venera", "keepalive complete failed: ${it.message}") }
+                        res.success(null)
+                    }
                     "notificationGranted" -> res.success(isNotificationGranted())
                     "requestNotification" -> when {
                         isNotificationGranted() -> res.success(true)

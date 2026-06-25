@@ -109,6 +109,8 @@ class DownloadKeepAliveService : Service() {
         private const val CHANNEL_ID = "download.progress"
         private const val KEY_STATUS = "status"
         private const val WAKE_TAG = "venera:dl-keepalive"
+        private const val DONE_NOTE_ID = 1102
+        private const val DONE_CHANNEL_ID = "download.done"
 
         /** 拉起服务，或在已运行时刷新通知文案。幂等。 */
         fun launch(context: Context, status: String) {
@@ -120,6 +122,40 @@ class DownloadKeepAliveService : Service() {
         /** 停止服务，未运行时调用也安全。 */
         fun halt(context: Context) {
             context.stopService(Intent(context, DownloadKeepAliveService::class.java))
+        }
+
+        /**
+         * 弹出一条一次性的「下载完成」通知。与常驻进度通知互不影响：用独立的
+         * 通知 id 和一个 DEFAULT 重要度的渠道，可被用户滑除、点按打开应用。
+         * 不依赖服务运行（队列已空、服务通常已停）。
+         */
+        fun notifyComplete(context: Context, text: String) {
+            val manager = context.getSystemService(NotificationManager::class.java) ?: return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                manager.createNotificationChannel(
+                    NotificationChannel(
+                        DONE_CHANNEL_ID,
+                        context.getString(R.string.download_done_channel_name),
+                        NotificationManager.IMPORTANCE_DEFAULT,
+                    ).apply { setShowBadge(true) }
+                )
+            }
+            val resume = Intent(context, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            val openApp = PendingIntent.getActivity(
+                context, 1, resume,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            val body = text.ifBlank { context.getString(R.string.download_done_default) }
+            val note = NotificationCompat.Builder(context, DONE_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setContentTitle(context.getString(R.string.app_name))
+                .setContentText(body)
+                .setContentIntent(openApp)
+                .setAutoCancel(true)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .build()
+            manager.notify(DONE_NOTE_ID, note)
         }
     }
 }

@@ -675,10 +675,18 @@ class LocalManager with ChangeNotifier {
   }
 
   void completeTask(DownloadTask task) {
+    final finishedTitle = task.title;
     add(task.toLocalComic());
     downloadingTasks.remove(task);
     notifyListeners();
     saveCurrentDownloadingTasks();
+    // Notify when the whole queue has drained (nothing left, or only paused/
+    // errored leftovers) so a background download run ends with a single
+    // "done" notification rather than silence (#10).
+    final moreToRun = downloadingTasks.any((t) => !t.isError && !t.userPaused);
+    if (!moreToRun) {
+      DownloadKeepAlive.instance.notifyComplete(finishedTitle);
+    }
     _advanceQueue();
   }
 
