@@ -10,6 +10,22 @@ const int _kMaxDroppedSwipePageForwardAnimationTime = 800;
 const int _kMaxPageBackAnimationTime = 300;
 const double _kMinFlingVelocity = 1.0;
 
+/// Invisible marker wrapped around every swipeable tile. The iOS-style
+/// back-swipe recognizer below hit-tests for this render object: a horizontal
+/// drag starting on a swipeable tile (e.g. swiping a left-opened favorite pane
+/// back closed) must NOT be stolen by the page back gesture, so over a swipe
+/// region the back gesture is only allowed from the screen's left edge. This
+/// lets left-swipe-to-favorite and right-swipe-to-go-back coexist.
+class SwipeRegionMarker extends SingleChildRenderObjectWidget {
+  const SwipeRegionMarker({super.key, required Widget super.child});
+
+  @override
+  RenderSwipeRegionMarker createRenderObject(BuildContext context) =>
+      RenderSwipeRegionMarker();
+}
+
+class RenderSwipeRegionMarker extends RenderProxyBox {}
+
 class AppPageRoute<T> extends PageRoute<T> with _AppRouteTransitionMixin {
   /// Construct a MaterialPageRoute whose contents are defined by [builder].
   AppPageRoute({
@@ -288,6 +304,13 @@ class _IOSBackGestureDetectorState extends State<IOSBackGestureDetector> {
 
     for (final entry in result.path) {
       final target = entry.target;
+      // A swipeable tile (left-swipe-to-favorite, etc.) owns horizontal drags;
+      // treat it like a horizontal scrollable so the back gesture only fires
+      // from the true left edge over it, instead of stealing the swipe-back-to-
+      // close drag and popping the page.
+      if (target is RenderSwipeRegionMarker) {
+        return true;
+      }
       if (target is RenderViewport) {
         if (target.axisDirection == AxisDirection.left ||
             target.axisDirection == AxisDirection.right) {

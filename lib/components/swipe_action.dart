@@ -113,14 +113,16 @@ class SwipeActionTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Slidable(
-      // DismissiblePane requires the Slidable to carry a Key so list items are
-      // synced by identity, not index, when one is dismissed and removed.
-      key: key,
-      groupTag: groupTag,
-      startActionPane: _buildPane(context, startPane),
-      endActionPane: _buildPane(context, endPane),
-      child: child,
+    return SwipeRegionMarker(
+      child: Slidable(
+        // DismissiblePane requires the Slidable to carry a Key so list items are
+        // synced by identity, not index, when one is dismissed and removed.
+        key: key,
+        groupTag: groupTag,
+        startActionPane: _buildPane(context, startPane),
+        endActionPane: _buildPane(context, endPane),
+        child: child,
+      ),
     );
   }
 }
