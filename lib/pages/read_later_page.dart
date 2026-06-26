@@ -241,6 +241,8 @@ class _ReadLaterPageState extends State<ReadLaterPage> {
       },
       child: Scaffold(
         body: SmoothCustomScrollView(
+          scrollbar: true,
+          scrollbarTopPadding: context.padding.top + 56,
           slivers: [
             SliverAppbar(
               leading: Tooltip(

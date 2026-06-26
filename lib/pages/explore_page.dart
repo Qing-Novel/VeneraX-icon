@@ -404,6 +404,7 @@ class _MixedExplorePageState
   Widget buildContent(BuildContext context, List<Object> data) {
     return SmoothCustomScrollView(
       controller: widget.controller,
+      scrollbar: true,
       slivers: [
         ...buildSlivers(context, data),
         const SliverListLoadingIndicator(),
@@ -589,6 +590,7 @@ class _MultiPartExplorePageState extends State<_MultiPartExplorePage> {
     return SmoothCustomScrollView(
       key: const PageStorageKey('scroll'),
       controller: widget.controller,
+      scrollbar: true,
       slivers: _buildPage().toList(),
     );
   }

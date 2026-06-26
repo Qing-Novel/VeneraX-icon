@@ -5,18 +5,29 @@ class SmoothCustomScrollView extends StatelessWidget {
     super.key,
     required this.slivers,
     this.controller,
+    this.scrollbar = false,
+    this.scrollbarTopPadding = 0,
   });
 
   final ScrollController? controller;
 
   final List<Widget> slivers;
 
+  /// When true, overlays a draggable [AppScrollBar] on the right edge for fast
+  /// jumping through long lists. It auto-hides when the content fits, so it is
+  /// safe to enable on any vertically-scrolling list.
+  final bool scrollbar;
+
+  /// Top inset for the scrollbar thumb so it clears a top app bar. Only used
+  /// when [scrollbar] is true.
+  final double scrollbarTopPadding;
+
   @override
   Widget build(BuildContext context) {
     return SmoothScrollProvider(
       controller: controller,
       builder: (context, controller, physics) {
-        return CustomScrollView(
+        Widget view = CustomScrollView(
           controller: controller,
           physics: physics,
           slivers: [
@@ -26,6 +37,19 @@ class SmoothCustomScrollView extends StatelessWidget {
             ),
           ],
         );
+        if (scrollbar) {
+          view = AppScrollBar(
+            controller: controller,
+            topPadding: scrollbarTopPadding,
+            child: ScrollConfiguration(
+              behavior: ScrollConfiguration.of(
+                context,
+              ).copyWith(scrollbars: false),
+              child: view,
+            ),
+          );
+        }
+        return view;
       },
     );
   }

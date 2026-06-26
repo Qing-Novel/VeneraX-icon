@@ -427,6 +427,7 @@ class _FollowUpdatesPageState extends AutomaticGlobalState<FollowUpdatesPage> {
     Widget? top,
   }) {
     return SmoothCustomScrollView(
+      scrollbar: true,
       slivers: [
         if (top != null) SliverToBoxAdapter(child: top),
         if (comics.isNotEmpty)

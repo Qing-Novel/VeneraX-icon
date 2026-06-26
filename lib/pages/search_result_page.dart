@@ -144,6 +144,7 @@ class _SearchResultPageState extends State<SearchResultPage> {
       key: Key(text + options.toString() + sourceKey),
       enableSelection: true,
       selectionHandlerCallback: (fn) => _enterSelection = fn,
+      scrollbarTopPadding: context.padding.top + 56,
       errorLeading: AppSearchBar(controller: controller, action: buildAction()),
       leadingSliver: SliverSearchBar(
         controller: controller,

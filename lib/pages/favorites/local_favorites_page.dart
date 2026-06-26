@@ -530,6 +530,8 @@ class _LocalFavoritesPageState extends State<_LocalFavoritesPage> {
 
     Widget body = SmoothCustomScrollView(
       controller: scrollController,
+      scrollbar: true,
+      scrollbarTopPadding: context.padding.top + 56,
       slivers: [
         if (!searchMode && !multiSelectMode)
           SliverAppbar(
@@ -1062,14 +1064,6 @@ class _LocalFavoritesPageState extends State<_LocalFavoritesPage> {
             },
           ),
       ],
-    );
-    body = AppScrollBar(
-      topPadding: 48,
-      controller: scrollController,
-      child: ScrollConfiguration(
-        behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
-        child: body,
-      ),
     );
     return PopScope(
       canPop: !multiSelectMode && !searchMode,

@@ -98,6 +98,7 @@ class _NormalFavoritePageState extends State<_NormalFavoritePage> {
   Widget build(BuildContext context) {
     return ComicList(
       key: comicListKey,
+      scrollbarTopPadding: context.padding.top + 56,
       leadingSliver: SliverAppbar(
         style: context.width < changePoint
             ? AppbarStyle.shadow
@@ -303,6 +304,8 @@ class _MultiFolderFavoritesPageState extends State<_MultiFolderFavoritesPage> {
       final keys = folders!.keys.toList();
 
       return SmoothCustomScrollView(
+        scrollbar: true,
+        scrollbarTopPadding: context.padding.top + 56,
         slivers: [
           sliverAppBar,
           SliverGridViewWithFixedItemHeight(
@@ -564,6 +567,7 @@ class _FavoriteFolder extends StatelessWidget {
     return ComicList(
       key: comicListKey,
       enablePageStorage: true,
+      scrollbarTopPadding: context.padding.top + 56,
       leadingSliver: SliverAppbar(
         title: Text(title),
         actions: [

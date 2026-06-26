@@ -1642,6 +1642,8 @@ class ComicList extends StatefulWidget {
     this.selectionHandlerCallback,
     this.enablePageStorage = false,
     this.enableSelection = false,
+    this.scrollbar = true,
+    this.scrollbarTopPadding = 0,
   });
 
   final Future<Res<List<Comic>>> Function(int page)? loadPage;
@@ -1673,6 +1675,14 @@ class ComicList extends StatefulWidget {
   /// Quick Favorite folder. Off by default so other ComicList pages are
   /// unaffected.
   final bool enableSelection;
+
+  /// Whether to overlay a draggable [AppScrollBar] for fast scrolling. On by
+  /// default since every ComicList is a top-level comic grid.
+  final bool scrollbar;
+
+  /// Top inset for the scrollbar thumb so it clears a top app bar (e.g. a
+  /// pinned [Appbar] when [Scaffold.extendBodyBehindAppBar] is used).
+  final double scrollbarTopPadding;
 
   @override
   State<ComicList> createState() => ComicListState();
@@ -2129,6 +2139,8 @@ class ComicListState extends State<ComicList> {
     return SmoothCustomScrollView(
       key: enablePageStorage ? PageStorageKey('scroll$_page') : null,
       controller: widget.controller,
+      scrollbar: widget.scrollbar,
+      scrollbarTopPadding: widget.scrollbarTopPadding,
       slivers: [
         if (_selecting)
           _buildSelectAppbar()
@@ -2175,6 +2187,8 @@ class ComicListState extends State<ComicList> {
     return SmoothCustomScrollView(
       key: enablePageStorage ? PageStorageKey('scroll$_page') : null,
       controller: widget.controller,
+      scrollbar: widget.scrollbar,
+      scrollbarTopPadding: widget.scrollbarTopPadding,
       slivers: [
         if (_selecting)
           _buildSelectAppbar()

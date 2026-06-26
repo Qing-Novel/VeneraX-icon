@@ -304,6 +304,8 @@ class _LocalComicsPageState extends State<LocalComicsPage>
 
     var body = Scaffold(
       body: SmoothCustomScrollView(
+        scrollbar: true,
+        scrollbarTopPadding: context.padding.top + 56,
         slivers: [
           if (!searchMode)
             SliverAppbar(

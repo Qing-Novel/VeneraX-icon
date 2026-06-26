@@ -129,6 +129,7 @@ class _CategoryComicsPageState extends State<CategoryComicsPage> {
         key: Key(widget.category + optionsValue.toString()),
         errorLeading: buildOptions().paddingTop(topPadding),
         leadingSliver: buildOptions().paddingTop(topPadding).toSliver(),
+        scrollbarTopPadding: topPadding,
         loadPage: (i) =>
             data.load(widget.category, widget.param, optionsValue, i),
       );

@@ -49,6 +49,7 @@ class _RankingPageState extends State<RankingPage> {
         errorLeading: SizedBox(height: topPadding),
         leadingSliver:
             buildOptions().sliverPadding(EdgeInsets.only(top: topPadding)),
+        scrollbarTopPadding: topPadding,
         loadPage: data.rankingData!.load == null
             ? null
             : (i) => data.rankingData!.load!(optionValue, i),
