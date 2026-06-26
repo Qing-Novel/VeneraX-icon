@@ -565,6 +565,7 @@ class _ComicPageState extends LoadingState<ComicPage, ComicDetails>
                         onTapTag(author, namespace ?? 'author');
                       },
                       onTapTag: onTapTag,
+                      enableLongPressCopy: true,
                     );
                   }(),
               ],

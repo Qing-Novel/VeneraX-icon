@@ -748,6 +748,7 @@ class ComicDescription extends StatelessWidget {
     this.showTitle = true,
     this.onTapAuthor,
     this.onTapTag,
+    this.enableLongPressCopy = false,
   });
 
   final String title;
@@ -765,6 +766,11 @@ class ComicDescription extends StatelessWidget {
   final bool showTitle;
   final void Function(String author, String? namespace)? onTapAuthor;
   final void Function(String tag, String namespace)? onTapTag;
+
+  /// Whether long-pressing an info/tag value copies it to the clipboard.
+  /// Enabled on the comic detail page; disabled on list tiles so a long press
+  /// over the tag area triggers the tile's own context menu instead (issue #79).
+  final bool enableLongPressCopy;
 
   @override
   Widget build(BuildContext context) {
@@ -911,10 +917,8 @@ class ComicDescription extends StatelessWidget {
           ),
           const SizedBox(width: 6),
           Expanded(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onLongPress: () => _copy(context, value),
-              child: Text(
+            child: () {
+              final valueText = Text(
                 value,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -922,8 +926,16 @@ class ComicDescription extends StatelessWidget {
                   fontSize: 12,
                   color: context.colorScheme.onSurfaceVariant,
                 ),
-              ),
-            ),
+              );
+              if (!enableLongPressCopy) {
+                return valueText;
+              }
+              return GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onLongPress: () => _copy(context, value),
+                child: valueText,
+              );
+            }(),
           ),
         ],
       ),
@@ -969,7 +981,9 @@ class ComicDescription extends StatelessWidget {
                   InkWell(
                     borderRadius: BorderRadius.circular(4),
                     onTap: actions[i].onTap,
-                    onLongPress: () => _copy(context, actions[i].text),
+                    onLongPress: enableLongPressCopy
+                        ? () => _copy(context, actions[i].text)
+                        : null,
                     child: Text(
                       actions[i].text,
                       style: TextStyle(
