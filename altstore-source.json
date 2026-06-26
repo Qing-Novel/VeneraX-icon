@@ -15,6 +15,15 @@
       "screenshots": [],
       "versions": [
         {
+          "version": "2.1.2",
+          "buildVersion": "217",
+          "date": "2026-06-26",
+          "localizedDescription": "## What's Changed\n\n### Added\n- Download the current chapter or the whole comic with one tap from inside the reader\n- Download page now supports pause / resume / cancel all, per-task pause, resume and retry, drag-to-reorder, and estimated time remaining\n- New \"Wi-Fi only download\" switch that auto-pauses on metered networks and resumes on Wi-Fi\n- New optional \"parallel downloads\" setting\n- A notification when all downloads finish\n- A clear warning when there isn't enough disk space to download\n- Unfinished downloads now resume automatically after restarting the app\n- Migrate WebDAV sync settings via QR code\n- Long-press to copy info on the comic detail page (author, tags, and more)\n- The WebDAV sync-failure dialog now has a \"Retry\" button to re-sync directly\n\n### Changed\n- Bottom navigation selected item now uses a rounded-rectangle highlight\n- The folder rename dialog is now pre-filled with the current name for quick edits\n- Keywords from aggregated search are now also saved to search history\n- The sync-config QR code now pops up instantly, with a refreshed interface\n\n### Fixed\n- Fixed an occasional crash on iOS at startup\n- Fixed WebDAV sync sometimes hanging / becoming unresponsive on iOS\n- Fixed the WebDAV auto-sync switch being reset under an empty config, and an empty config still triggering an upload\n- Fixed downloads getting stuck on the whole queue when one failed or was cancelled\n- Added integrity checks for downloaded images, rejecting corrupted / truncated images and retrying\n- Fixed update marks occasionally being lost when cancelling a follow-update check\n- Cancelled follow-update tasks now disappear from the list immediately\n- Fixed the left-swipe-to-favorite and right-swipe-to-go-back gestures conflicting and triggering an accidental back\n- Fixed the sidebar logo not aligning with the home search box\n\n**Full Changelog**: https://github.com/Kyosee/venera/compare/v2.1.1...v2.1.2",
+          "downloadURL": "https://github.com/Kyosee/venera/releases/download/v2.1.2/venera-ios-2.1.2%2B217.ipa",
+          "size": 23054160,
+          "minOSVersion": "14.0"
+        },
+        {
           "version": "2.1.1",
           "buildVersion": "215",
           "date": "2026-06-24",
@@ -51,11 +60,11 @@
           "minOSVersion": "14.0"
         }
       ],
-      "version": "2.1.1",
-      "versionDate": "2026-06-24",
-      "versionDescription": "## What's Changed\n\n### Added\n- Search results now support multi-select batch favoriting, and you can swipe a single result to favorite it quickly\n\n### Changed\n- Tasks page: background tasks such as WebDAV sync now show unified titles and status, with options to manage and clear task history\n- Reading settings: a new collapsible \"Gesture settings\" section groups Double-tap zoom, Long-press zoom, Long-press zoom position, and Volume-key page turning\n\n### Fixed\n- Fixed imported local comics not showing their cover on the details and history pages\n- Fixed garbled / incorrect Chinese text on some Android devices (e.g. ColorOS 16)\n- Smoother loading when opening the History / Follow-Updates pages\n- Clearing history now clears records for all task types\n- Fixed the paused-task icon and stutter on the tasks page\n\n**Full Changelog**: https://github.com/Kyosee/venera/compare/v2.1.0...v2.1.1",
-      "downloadURL": "https://github.com/Kyosee/venera/releases/download/v2.1.1/venera-ios-2.1.1%2B215.ipa",
-      "size": 16013402
+      "version": "2.1.2",
+      "versionDate": "2026-06-26",
+      "versionDescription": "## What's Changed\n\n### Added\n- Download the current chapter or the whole comic with one tap from inside the reader\n- Download page now supports pause / resume / cancel all, per-task pause, resume and retry, drag-to-reorder, and estimated time remaining\n- New \"Wi-Fi only download\" switch that auto-pauses on metered networks and resumes on Wi-Fi\n- New optional \"parallel downloads\" setting\n- A notification when all downloads finish\n- A clear warning when there isn't enough disk space to download\n- Unfinished downloads now resume automatically after restarting the app\n- Migrate WebDAV sync settings via QR code\n- Long-press to copy info on the comic detail page (author, tags, and more)\n- The WebDAV sync-failure dialog now has a \"Retry\" button to re-sync directly\n\n### Changed\n- Bottom navigation selected item now uses a rounded-rectangle highlight\n- The folder rename dialog is now pre-filled with the current name for quick edits\n- Keywords from aggregated search are now also saved to search history\n- The sync-config QR code now pops up instantly, with a refreshed interface\n\n### Fixed\n- Fixed an occasional crash on iOS at startup\n- Fixed WebDAV sync sometimes hanging / becoming unresponsive on iOS\n- Fixed the WebDAV auto-sync switch being reset under an empty config, and an empty config still triggering an upload\n- Fixed downloads getting stuck on the whole queue when one failed or was cancelled\n- Added integrity checks for downloaded images, rejecting corrupted / truncated images and retrying\n- Fixed update marks occasionally being lost when cancelling a follow-update check\n- Cancelled follow-update tasks now disappear from the list immediately\n- Fixed the left-swipe-to-favorite and right-swipe-to-go-back gestures conflicting and triggering an accidental back\n- Fixed the sidebar logo not aligning with the home search box\n\n**Full Changelog**: https://github.com/Kyosee/venera/compare/v2.1.1...v2.1.2",
+      "downloadURL": "https://github.com/Kyosee/venera/releases/download/v2.1.2/venera-ios-2.1.2%2B217.ipa",
+      "size": 23054160
     }
   ],
   "news": []
