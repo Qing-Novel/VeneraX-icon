@@ -651,6 +651,11 @@ class _LocalFavoritesPageState extends State<_LocalFavoritesPage> {
                           hintText: "New Name".tl,
                           initialValue: widget.folder,
                           onConfirm: (value) {
+                            // Pre-filled with the current name: confirming it
+                            // unchanged is a no-op, not a "folder exists" error.
+                            if (value.toString() == widget.folder) {
+                              return null;
+                            }
                             var err = validateFolderName(value.toString());
                             if (err != null) {
                               return err;
