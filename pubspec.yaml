@@ -65,7 +65,11 @@ dependencies:
       url: https://github.com/venera-app/webdav_client
       ref: 2f669c98fb81cff1c64fee93466a1475c77e4273
   battery_plus: ^7.0.0
-  connectivity_plus: ^7.0.0
+  # Pinned to 7.0.0: 7.1.x references NWPath.isUltraConstrained, an iOS/macOS 26
+  # SDK symbol guarded only at runtime, so it fails to compile on the Xcode 16.4
+  # toolchain our CI uses. Stay below 7.1.0 until the build toolchain ships the
+  # iOS 26 SDK.
+  connectivity_plus: 7.0.0
   local_auth: ^3.0.1
   flutter_saf:
     git: 

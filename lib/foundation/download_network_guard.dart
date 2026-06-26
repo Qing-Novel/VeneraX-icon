@@ -50,8 +50,10 @@ class DownloadNetworkGuard {
     }
     final hasUnmetered = result.contains(ConnectivityResult.wifi) ||
         result.contains(ConnectivityResult.ethernet);
-    final hasMetered = result.contains(ConnectivityResult.mobile) ||
-        result.contains(ConnectivityResult.satellite);
+    // ConnectivityResult.satellite only exists in connectivity_plus 7.1.0+,
+    // which we can't use yet (see pubspec pin). Mobile is the metered link that
+    // matters here anyway; satellite is treated as "can't tell" and left alone.
+    final hasMetered = result.contains(ConnectivityResult.mobile);
     // Only block when clearly on a metered link with no unmetered one. "No
     // network" doesn't actively block: downloads simply fail/retry, and a real
     // WiFi/ethernet event will re-evaluate.
