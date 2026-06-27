@@ -24,6 +24,32 @@ import 'package:venera/utils/translations.dart';
 
 import 'io.dart';
 
+/// The version number to stamp on a freshly uploaded WebDAV backup.
+///
+/// It must beat BOTH the local version and the highest version already on the
+/// server. Deriving it from the local version alone let a device whose local
+/// version trailed the server — a fresh device, or one that just imported a
+/// foreign archive carrying an unrelated lower `dataVersion` — upload a backup
+/// that the numeric version-based sync direction treated as "older", so other
+/// devices never pulled it (issue #80). Pure function, easy to unit-test.
+int nextSyncVersion(int localVersion, int remoteMaxVersion) =>
+    (localVersion > remoteMaxVersion ? localVersion : remoteMaxVersion) + 1;
+
+/// Highest backup version present among [fileNames], or 0 when none parse.
+///
+/// Compares by numeric version (via [RemoteBackupInfo.fromFileName]), never by
+/// file-name string order — `…-10.venera` outranks `…-9.venera`. Skips null and
+/// non-`.venera` entries. Pure function, easy to unit-test.
+int maxBackupVersion(Iterable<String?> fileNames) {
+  var max = 0;
+  for (final name in fileNames) {
+    if (name == null || !name.endsWith('.venera')) continue;
+    final v = RemoteBackupInfo.fromFileName(name).version;
+    if (v > max) max = v;
+  }
+  return max;
+}
+
 class DataSync with ChangeNotifier {
   DataSync._() {
     if (isEnabled) {
@@ -373,8 +399,19 @@ class DataSync with ChangeNotifier {
 
       File? data;
       final previousVersion = _dataVersion();
-      final nextVersion = previousVersion + 1;
       try {
+        // Read the server's existing backups first and stamp this upload with a
+        // version above the highest one already there. Basing the new version on
+        // the local value alone let a device trailing the server (a fresh device,
+        // or one that just imported a foreign archive whose dataVersion is
+        // unrelated and lower) upload a backup other devices treated as "older"
+        // and never auto-pulled (#80).
+        var files = await client.readDir('/');
+        files = files.where((e) => e.name!.endsWith('.venera')).toList();
+        final nextVersion = nextSyncVersion(
+          previousVersion,
+          maxBackupVersion(files.map((e) => e.name)),
+        );
         appdata.settings['dataVersion'] = nextVersion;
         await appdata.saveData(false);
 
@@ -402,8 +439,6 @@ class DataSync with ChangeNotifier {
           formatTaskStatus(title: 'Uploading data'.tl, detail: filename),
         );
 
-        var files = await client.readDir('/');
-        files = files.where((e) => e.name!.endsWith('.venera')).toList();
         var old = files.firstWhereOrNull((e) => e.name!.startsWith("$time-"));
         if (old != null) {
           await client.remove(old.name!);

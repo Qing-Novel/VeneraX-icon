@@ -85,4 +85,55 @@ void main() {
       expect(info.date, DateTime.fromMillisecondsSinceEpoch(8640000000000000));
     });
   });
+
+  group('maxBackupVersion', () {
+    test('returns 0 when there are no backups', () {
+      expect(maxBackupVersion(const <String?>[]), 0);
+    });
+
+    test('ignores non-.venera and null names', () {
+      expect(
+        maxBackupVersion(['notes.txt', null, '20240-4.android.venera']),
+        4,
+      );
+    });
+
+    test('picks the highest version by number, not string order', () {
+      // "…-10" must outrank "…-9"; lexicographic order would pick 9.
+      expect(
+        maxBackupVersion([
+          '20240-9.windows.venera',
+          '20240-10.android.venera',
+          '20240-2.ios.venera',
+        ]),
+        10,
+      );
+    });
+  });
+
+  group('nextSyncVersion', () {
+    test('steady state (local == remote max) is unchanged: max + 1', () {
+      // Normal daily use keeps local aligned to the server, so this is the
+      // common path and must stay identical to the old `local + 1`.
+      expect(nextSyncVersion(7, 7), 8);
+    });
+
+    test('device behind the server jumps above the server max (#80)', () {
+      // A fresh device, or one that just imported a foreign archive carrying an
+      // unrelated lower dataVersion, has local < remote max. The upload must
+      // still beat the server's highest version, otherwise other devices never
+      // recognize it as newer. Old behavior (local + 1 = 4) silently lost.
+      expect(nextSyncVersion(3, 20), 21);
+    });
+
+    test('device ahead of the server still advances from local', () {
+      // Server backups were rotated/cleared away; the local copy is the source
+      // of truth and keeps climbing from its own version.
+      expect(nextSyncVersion(30, 12), 31);
+    });
+
+    test('fresh install with empty server starts at 1', () {
+      expect(nextSyncVersion(0, 0), 1);
+    });
+  });
 }
