@@ -596,6 +596,11 @@ class DataSync with ChangeNotifier {
             await appdata.saveData(false);
           }
 
+          // The backup replaced settings in place; rebuild the UI so imported
+          // appearance changes (e.g. a non-default theme color) take effect now
+          // instead of only after a restart (#87). Mirrors the file-import path.
+          App.forceRebuild();
+
           if (_shouldSyncImages()) {
             _scheduleImageSync();
           }
@@ -703,6 +708,10 @@ class DataSync with ChangeNotifier {
 
         appdata.settings['dataVersion'] = maxRemoteVersion + 1;
         await appdata.saveData(false);
+
+        // Apply imported appearance settings (e.g. theme color) immediately
+        // rather than only after a restart (#87).
+        App.forceRebuild();
 
         if (!_hasCompletedInitialSync()) _markInitialSyncCompleted();
         _addSyncLog('download', fileName, true, null);
