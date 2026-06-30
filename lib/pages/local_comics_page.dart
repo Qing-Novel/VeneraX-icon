@@ -37,7 +37,11 @@ class _LocalComicsPageState extends State<LocalComicsPage>
 
   LocalComicStatus? currentTab; // null means "全部" (all)
 
-  void update() {
+  /// Builds the comic list for the current tab/keyword, merging active
+  /// downloading tasks that aren't persisted in the database yet, so an
+  /// in-progress comic shows under "All"/"Downloading" right away instead of
+  /// only after switching tabs forces a rebuild (#90).
+  List<LocalComic> _collectComics() {
     List<LocalComic> all;
     if (keyword.isEmpty) {
       all = LocalManager().getComics(sortType);
@@ -53,10 +57,14 @@ class _LocalComicsPageState extends State<LocalComicsPage>
         .map((task) => task.toLocalComic())
         .toList();
     all = [...downloadingComics, ...all];
+    return currentTab == null
+        ? all
+        : all.where((c) => c.status == currentTab).toList();
+  }
+
+  void update() {
     setState(() {
-      comics = currentTab == null
-          ? all
-          : all.where((c) => c.status == currentTab).toList();
+      comics = _collectComics();
     });
   }
 
@@ -66,7 +74,7 @@ class _LocalComicsPageState extends State<LocalComicsPage>
   void initState() {
     var sort = appdata.implicitData["local_sort"] ?? "default";
     sortType = LocalSortType.fromString(sort);
-    comics = LocalManager().getComics(sortType);
+    comics = _collectComics();
     LocalManager().addListener(update);
     _tabController = TabController(length: 4, vsync: this);
     _tabController.addListener(_onTabChanged);
