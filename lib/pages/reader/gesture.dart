@@ -21,6 +21,10 @@ class _ReaderGestureDetectorState
 
   static const _kTapToTurnPagePercent = 0.3;
 
+  /// 手指移动超过此距离(平方, 逻辑像素)即判定为拖动, 而非点按/长按。
+  /// 这样滑动收藏等手势无需等长按计时器 250ms 就能触发, 快速滑动也能识别 (#96)。
+  static const _kDragStartThresholdSquared = 20.0 * 20.0;
+
   final _dragListeners = <_DragListener>[];
 
   int fingers = 0;
@@ -86,6 +90,10 @@ class _ReaderGestureDetectorState
           if (!mounted || _lastTapPointer != event.pointer || fingers != 1) {
             return;
           }
+          // 拖动可能已在 onPointerMove 里提前判定, 此处不再重复启动, 否则会二次 onStart。
+          if (_dragInProgress) {
+            return;
+          }
           final moveDistance = _lastTapMoveDistance;
           if (moveDistance != null) {
             if (moveDistance.distanceSquared < 20.0 * 20.0) {
@@ -104,6 +112,21 @@ class _ReaderGestureDetectorState
       onPointerMove: (event) {
         if (event.pointer == _lastTapPointer && _lastTapMoveDistance != null) {
           _lastTapMoveDistance = event.delta + _lastTapMoveDistance!;
+          // 移动越过阈值即立即判定为拖动, 无需等长按计时器 250ms, 使快速滑动
+          // 手势 (如滑动收藏) 也能被识别, 不再要求缓慢长划 (#96)。
+          if (!_dragInProgress &&
+              !_longPressInProgress &&
+              fingers == 1 &&
+              _lastTapMoveDistance!.distanceSquared >
+                  _kDragStartThresholdSquared) {
+            _dragInProgress = true;
+            for (var dragListener in _dragListeners) {
+              dragListener.onStart?.call(event.position);
+              dragListener.onMove?.call(_lastTapMoveDistance!);
+            }
+            // 本次事件的位移已在上面随累计值一起下发, 不再重复下发。
+            return;
+          }
         }
         if (_dragInProgress) {
           for (var dragListener in _dragListeners) {
