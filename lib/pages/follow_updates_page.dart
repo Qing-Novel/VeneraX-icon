@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:venera/components/components.dart';
 import 'package:venera/foundation/app.dart';
 import 'package:venera/foundation/appdata.dart';
+import 'package:venera/foundation/battery_optimization.dart';
 import 'package:venera/foundation/comic_state_repository.dart';
 import 'package:venera/foundation/comic_type.dart';
 import 'package:venera/foundation/favorites.dart';
@@ -674,6 +675,7 @@ class _FollowUpdatesPageState extends AutomaticGlobalState<FollowUpdatesPage> {
     }
 
     if (count > 0) {
+      unawaited(maybePromptBatteryOptimization());
       var task = FollowUpdateTaskManager.instance.startCheck(
         folder,
         manual: true,
@@ -735,6 +737,7 @@ class _FollowUpdatesPageState extends AutomaticGlobalState<FollowUpdatesPage> {
   }
 
   void checkNow() async {
+    unawaited(maybePromptBatteryOptimization());
     FollowUpdatesService._cancelChecking?.call();
     FollowUpdateTaskManager.instance.startCheck(folder!, manual: true);
     context.showMessage(message: "Task started".tl);

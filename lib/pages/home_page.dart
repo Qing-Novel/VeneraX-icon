@@ -3,6 +3,7 @@ import 'package:url_launcher/url_launcher_string.dart';
 import 'package:venera/components/components.dart';
 import 'package:venera/foundation/app.dart';
 import 'package:venera/foundation/background_keepalive.dart';
+import 'package:venera/foundation/battery_optimization.dart';
 import 'package:venera/foundation/comic_source/comic_source.dart';
 import 'package:venera/foundation/consts.dart';
 import 'package:venera/foundation/appdata.dart';
@@ -420,6 +421,7 @@ class _SyncButtonState extends State<_SyncButton> with WidgetsBindingObserver {
                       ),
                     );
                   } else {
+                    maybePromptBatteryOptimization();
                     DataSync().syncData();
                   }
                 },

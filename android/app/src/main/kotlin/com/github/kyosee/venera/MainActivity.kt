@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import android.view.KeyEvent
@@ -288,6 +289,51 @@ class MainActivity : FlutterFragmentActivity() {
                 }
             }
 
+        // 电池优化豁免：查询当前是否已豁免、拉起系统请求对话框，或跳转到电池优化设置列表。
+        // 前台服务只挡得住系统冻结的一部分，OEM ROM 的省电策略仍会在应用切后台后冻结进程，
+        // 需要用户把本应用加入电池优化白名单，后台任务（追更/同步/导入导出/下载）才能持续运行。
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "venera/battery_optimization")
+            .setMethodCallHandler { call, res ->
+                when (call.method) {
+                    "isIgnoring" -> res.success(isIgnoringBatteryOptimizations())
+                    "request" -> {
+                        // Android 6.0 起才有此机制；更早版本无需豁免，直接返回已豁免。
+                        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+                            res.success(true)
+                            return@setMethodCallHandler
+                        }
+                        if (isIgnoringBatteryOptimizations()) {
+                            res.success(true)
+                            return@setMethodCallHandler
+                        }
+                        try {
+                            @android.annotation.SuppressLint("BatteryLife")
+                            val intent = Intent(
+                                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                Uri.parse("package:$packageName"),
+                            )
+                            startContractForResult(
+                                ActivityResultContracts.StartActivityForResult(),
+                                intent,
+                            ) { _ ->
+                                res.success(isIgnoringBatteryOptimizations())
+                            }
+                        } catch (e: Exception) {
+                            // 个别 ROM 屏蔽了该 action，退回到设置列表让用户手动处理。
+                            Log.w("Venera", "request battery exemption failed: ${e.message}")
+                            runCatching { openBatteryOptimizationSettings() }
+                            res.success(false)
+                        }
+                    }
+                    "openSettings" -> {
+                        val ok = runCatching { openBatteryOptimizationSettings() }
+                            .getOrDefault(false)
+                        res.success(ok)
+                    }
+                    else -> res.notImplemented()
+                }
+            }
+
         val shareTextChannel = EventChannel(flutterEngine.dartExecutor.binaryMessenger, "venera/text_share")
         shareTextChannel.setStreamHandler(
             object : EventChannel.StreamHandler {
@@ -478,6 +524,38 @@ class MainActivity : FlutterFragmentActivity() {
         } else {
             true
         }
+
+    // 是否已被系统豁免电池优化。Android 6.0 以下没有此机制，视为已豁免。
+    private fun isIgnoringBatteryOptimizations(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
+        val power = getSystemService(POWER_SERVICE) as? PowerManager
+            ?: return true
+        return power.isIgnoringBatteryOptimizations(packageName)
+    }
+
+    // 跳转到系统「电池优化」设置列表，让用户手动把本应用移出优化名单。
+    // 作为 ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS 被 ROM 屏蔽时的兜底。
+    private fun openBatteryOptimizationSettings(): Boolean {
+        val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+        return try {
+            startActivity(intent)
+            true
+        } catch (e: Exception) {
+            // 连列表页都没有的 ROM，退回到本应用的详情设置页。
+            Log.w("Venera", "open battery settings failed: ${e.message}")
+            try {
+                startActivity(
+                    Intent(
+                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:$packageName"),
+                    )
+                )
+                true
+            } catch (e2: Exception) {
+                false
+            }
+        }
+    }
 
     private fun openFile(result: MethodChannel.Result, mimeType: String) {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT)

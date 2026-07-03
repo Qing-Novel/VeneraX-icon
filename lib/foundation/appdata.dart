@@ -102,6 +102,7 @@ class Appdata with Init {
   static const _disableSync = [
     "proxy",
     "authorizationRequired",
+    "batteryOptimizationPrompted",
     "customImageProcessing",
     "webdav",
     "disableSyncFields",
@@ -306,6 +307,7 @@ class Settings with ChangeNotifier {
     'quickCollectImage': 'No', // No, DoubleTap, Swipe
     'autoFavoriteCover': false, // 收藏图片时是否自动连带收藏该章节封面
     'authorizationRequired': false,
+    'batteryOptimizationPrompted': false, // 是否已提示过忽略电池优化（每设备一次，#84）
     'requireDisclaimerConsent': false,
     'disclaimerConsented': false,
     'onClickFavorite': 'viewDetail', // viewDetail, read

@@ -260,6 +260,13 @@ class _AppSettingsState extends State<AppSettings> {
           },
           actionTitle: 'View'.tl,
         ).toSliver(),
+        if (App.isAndroid) ...[
+          _SettingPartTitle(
+            title: "Background".tl,
+            icon: Icons.battery_saver,
+          ),
+          const _BatteryOptimizationSetting().toSliver(),
+        ],
         _SettingPartTitle(title: "User".tl, icon: Icons.person_outline),
         SelectSetting(
           title: "Language".tl,
@@ -311,6 +318,79 @@ class _AppSettingsState extends State<AppSettings> {
           ).toSliver(),
         ],
       ],
+    );
+  }
+}
+
+/// 电池优化豁免设置项（仅 Android）。展示当前豁免状态，未豁免时提供一键请求；
+/// 系统请求对话框被 ROM 屏蔽时退回到设置列表。回到前台时刷新状态，方便用户在
+/// 系统设置里改完开关返回即时看到结果。
+class _BatteryOptimizationSetting extends StatefulWidget {
+  const _BatteryOptimizationSetting();
+
+  @override
+  State<_BatteryOptimizationSetting> createState() =>
+      _BatteryOptimizationSettingState();
+}
+
+class _BatteryOptimizationSettingState
+    extends State<_BatteryOptimizationSetting> with WidgetsBindingObserver {
+  bool? _ignoring;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _refresh();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _refresh();
+    }
+  }
+
+  Future<void> _refresh() async {
+    final ignoring = await BatteryOptimization.instance.isIgnoring();
+    if (mounted) {
+      setState(() => _ignoring = ignoring);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ignoring = _ignoring;
+    final subtitle = ignoring == null
+        ? "Checking".tl
+        : (ignoring
+            ? "Battery optimization disabled".tl
+            : "Battery optimization enabled, background tasks may be frozen".tl);
+    return ListTile(
+      title: Text("Ignore Battery Optimization".tl),
+      subtitle: Text(subtitle),
+      isThreeLine: ignoring == false,
+      trailing: ignoring == true
+          ? Icon(Icons.check_circle, color: context.colorScheme.primary)
+          : Button.normal(
+              onPressed: () async {
+                await BatteryOptimization.instance.request();
+                await _refresh();
+              },
+              child: Text("Allow".tl),
+            ).fixHeight(28),
+      onTap: ignoring == true
+          ? null
+          : () async {
+              await BatteryOptimization.instance.request();
+              await _refresh();
+            },
     );
   }
 }
