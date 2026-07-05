@@ -15,6 +15,15 @@
       "screenshots": [],
       "versions": [
         {
+          "version": "2.1.4",
+          "buildVersion": "219",
+          "date": "2026-07-05",
+          "localizedDescription": "## What's Changed\n\n### Added\n- Draggable scrollbar on the comic detail page for quick navigation (useful when a source shows a full preview there)\n- Local comic export now shows detailed progress for the packaging and folder-writing stages, so it no longer looks stuck at the end\n- New guide to ignore battery optimization, reducing background tasks (follow-updates / sync / import-export) being frozen by the system\n- One-tap entry to the album view from an image-favorite list item\n- New toggle for whether WebDAV sync goes through the proxy\n- New option to automatically clean up old reading history\n\n### Fixed\n- Fix stale data overwriting newer data and reverting your library when syncing across multiple devices\n- Fix a crash from high memory use when exporting a large comic library as a merged file\n- Fix a possible crash when syncing images of a large library over WebDAV\n- Fix theme color and other appearance settings needing a restart to take effect after a WebDAV restore\n- Fix page-turn gestures being hard to trigger when swiping quickly in the reader\n- Fix a crash from accidentally triggering favorite while scrolling on the chapter comments page\n- Fix the Android system back gesture occasionally going back twice and skipping the detail page\n- Fix the \"All\" section on the downloads page not showing in-progress downloads on first open\n- Fix downloads failing when the storage folder was not writable (permission is now requested as needed)\n- Fix manual import/export and WebDAV image sync interfering with each other when run at the same time\n\n**Full Changelog**: https://github.com/Kyosee/venera/compare/v2.1.3...v2.1.4",
+          "downloadURL": "https://github.com/Kyosee/venera/releases/download/v2.1.4/venera-ios-2.1.4%2B219.ipa",
+          "size": 23081566,
+          "minOSVersion": "14.0"
+        },
+        {
           "version": "2.1.3",
           "buildVersion": "218",
           "date": "2026-06-28",
@@ -69,11 +78,11 @@
           "minOSVersion": "14.0"
         }
       ],
-      "version": "2.1.3",
-      "versionDate": "2026-06-28",
-      "versionDescription": "## What's Changed\n\n### Added\n- Settings page now supports keyword search\n- Swipe left on local favorites to unfavorite\n- Draggable scrollbar on long list pages for quick navigation\n\n### Fixed\n- Fix search results not refreshing after removing a favorite in search mode\n- Fix backup rotation sometimes deleting the newest backup instead of the oldest\n- Fix background sync being frozen by the system and missing its notification card\n- Fix long-press on list card tags accidentally copying text (long-press copy now only works on the detail page)\n- Fill in missing translations in settings, update dialog, and other places for non-Chinese languages\n\n**Full Changelog**: https://github.com/Kyosee/venera/compare/v2.1.2...v2.1.3",
-      "downloadURL": "https://github.com/Kyosee/venera/releases/download/v2.1.3/venera-ios-2.1.3%2B218.ipa",
-      "size": 23059914
+      "version": "2.1.4",
+      "versionDate": "2026-07-05",
+      "versionDescription": "## What's Changed\n\n### Added\n- Draggable scrollbar on the comic detail page for quick navigation (useful when a source shows a full preview there)\n- Local comic export now shows detailed progress for the packaging and folder-writing stages, so it no longer looks stuck at the end\n- New guide to ignore battery optimization, reducing background tasks (follow-updates / sync / import-export) being frozen by the system\n- One-tap entry to the album view from an image-favorite list item\n- New toggle for whether WebDAV sync goes through the proxy\n- New option to automatically clean up old reading history\n\n### Fixed\n- Fix stale data overwriting newer data and reverting your library when syncing across multiple devices\n- Fix a crash from high memory use when exporting a large comic library as a merged file\n- Fix a possible crash when syncing images of a large library over WebDAV\n- Fix theme color and other appearance settings needing a restart to take effect after a WebDAV restore\n- Fix page-turn gestures being hard to trigger when swiping quickly in the reader\n- Fix a crash from accidentally triggering favorite while scrolling on the chapter comments page\n- Fix the Android system back gesture occasionally going back twice and skipping the detail page\n- Fix the \"All\" section on the downloads page not showing in-progress downloads on first open\n- Fix downloads failing when the storage folder was not writable (permission is now requested as needed)\n- Fix manual import/export and WebDAV image sync interfering with each other when run at the same time\n\n**Full Changelog**: https://github.com/Kyosee/venera/compare/v2.1.3...v2.1.4",
+      "downloadURL": "https://github.com/Kyosee/venera/releases/download/v2.1.4/venera-ios-2.1.4%2B219.ipa",
+      "size": 23081566
     }
   ],
   "news": []
