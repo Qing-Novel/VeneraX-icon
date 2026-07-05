@@ -206,8 +206,6 @@ class FollowUpdateTaskManager with ChangeNotifier {
       return;
     }
     _runningIds.add(task.id);
-    var lastUpdated = 0;
-    var lastErrors = 0;
     try {
       await for (var progress in updateFolder(
         task.folder,
@@ -243,19 +241,17 @@ class FollowUpdateTaskManager with ChangeNotifier {
             ),
           );
           source.checked++;
-          if (progress.updated > lastUpdated) {
+          if (progress.comicUpdated) {
             task.updated++;
             source.updated++;
           }
-          if (progress.errors > lastErrors) {
+          if (progress.errorMessage != null) {
             task.failed++;
             source.failed++;
           }
-          _saveActiveTasks();
+          _saveActiveTasksThrottled();
           _refreshKeepAlive(task);
         }
-        lastUpdated = progress.updated;
-        lastErrors = progress.errors;
         notifyListeners();
       }
       if (task.status == FollowUpdateTaskStatus.running) {
@@ -426,5 +422,22 @@ class FollowUpdateTaskManager with ChangeNotifier {
         .map((task) => task.toJson())
         .toList();
     appdata.writeImplicitData();
+  }
+
+  DateTime _lastActiveTasksSave = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// Per-comic persistence rewrites the whole implicit-data file; on a large
+  /// folder that's hundreds of writes per check, so cap it at one per second.
+  /// Counters may lag disk by at most that second after a hard kill — resume
+  /// correctness is unaffected, it derives from each comic's last_check_time
+  /// in the favorites database, not from these counters. Terminal states
+  /// still persist immediately via [_saveActiveTasks].
+  void _saveActiveTasksThrottled() {
+    var now = DateTime.now();
+    if (now.difference(_lastActiveTasksSave) < const Duration(seconds: 1)) {
+      return;
+    }
+    _lastActiveTasksSave = now;
+    _saveActiveTasks();
   }
 }

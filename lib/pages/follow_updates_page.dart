@@ -832,6 +832,12 @@ abstract class FollowUpdatesService {
       if (_cancelRequested) {
         return;
       }
+      // The wait above can outlive a folder change/disable; re-read the
+      // setting so a check isn't started for a folder no longer followed.
+      folder = appdata.settings["followUpdatesFolder"];
+      if (folder == null) {
+        return;
+      }
       var task = FollowUpdateTaskManager.instance.startCheck(
         folder,
         manual: false,

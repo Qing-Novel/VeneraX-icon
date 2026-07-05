@@ -36,6 +36,13 @@ Future<ComicUpdateResult> updateComic(
         return ComicUpdateResult(false, null);
       }
 
+      // Rate-limited or blocked endpoints sometimes "succeed" with a hollow
+      // payload; writing it below would blank the favorite's name/cover.
+      // Treat it as a failed attempt so the retry/error path reports it.
+      if (newInfo.title.trim().isEmpty) {
+        throw Exception("Empty comic info");
+      }
+
       var newTags = <String>[];
       for (var entry in newInfo.tags.entries) {
         const shouldIgnore = ['author', 'artist', 'time'];
@@ -107,6 +114,10 @@ class UpdateProgress {
   final FavoriteItemWithUpdateInfo? comic;
   final String? errorMessage;
 
+  /// Whether [comic] itself was found updated by this event — unlike the
+  /// cumulative [updated] counter, this needs no cross-event bookkeeping.
+  final bool comicUpdated;
+
   UpdateProgress(
     this.total,
     this.current,
@@ -114,6 +125,7 @@ class UpdateProgress {
     this.updated, [
     this.comic,
     this.errorMessage,
+    this.comicUpdated = false,
   ]);
 }
 
@@ -220,6 +232,7 @@ void updateFolderBase(
             updated,
             comic,
             result.errorMessage,
+            result.updated,
           ),
         );
       }

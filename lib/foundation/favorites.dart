@@ -1840,7 +1840,7 @@ class LocalFavoritesManager with ChangeNotifier {
     ComicType type,
     String updateTime,
   ) {
-    var oldTime = _db
+    var row = _db
         .select(
           """
       select last_update_time from "$folder"
@@ -1848,7 +1848,12 @@ class LocalFavoritesManager with ChangeNotifier {
     """,
           [id, type.value],
         )
-        .first['last_update_time'];
+        .firstOrNull;
+    if (row == null) {
+      // The comic left the folder while its check was in flight.
+      return;
+    }
+    var oldTime = row['last_update_time'];
     var hasNewUpdate = oldTime != updateTime;
     // The flag is sticky: a check may only RAISE has_new_update to 1, never
     // clear it (`has_new_update | ?`). Clearing is the read path's job
