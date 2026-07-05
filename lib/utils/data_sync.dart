@@ -566,35 +566,22 @@ class DataSync with ChangeNotifier {
         appdata.settings['dataVersion'] = nextVersion;
         await appdata.saveData(false);
 
-        // Supersede today's OWN earlier backup(s). Restricted to this
-        // platform: a bare "$time-" prefix match would also delete a backup
-        // another device uploaded today — possibly the fleet's newest data.
-        for (final stale in sameDayOwnBackups(
+        // Per-platform retention: every platform keeps its newest
+        // [backupRetentionPerPlatform] backups so a bad upload can be rolled
+        // back from server history via "restore specific backup". Replaces
+        // the old same-day dedup (which could delete the last good snapshot
+        // uploaded minutes before a mistake) and the global 10-file cap
+        // (which pruned by lowest version fleet-wide and could starve an
+        // inactive platform of its only backups).
+        for (final stale in backupsBeyondPlatformRetention(
           fileNames: files.map((e) => e.name),
-          day: time,
-          platform: _platformTag(),
           newFileName: filename,
         )) {
           try {
             await client.remove(stale);
           } catch (e) {
             // Cleanup is best-effort; the new backup is already safe.
-            Log.warning("Upload Data", "Failed to prune same-day backup $stale: $e");
-          }
-        }
-        if (files.length >= 10) {
-          // Prune the oldest by NUMERIC version, never the lexicographically
-          // first — string order ranks "…-100" below "…-99" and would delete
-          // the newest backup every other device syncs from.
-          final toPrune = lowestVersionBackup(
-            files.map((e) => e.name).where((n) => n != filename),
-          );
-          if (toPrune != null) {
-            try {
-              await client.remove(toPrune);
-            } catch (e) {
-              Log.warning("Upload Data", "Failed to prune $toPrune: $e");
-            }
+            Log.warning("Upload Data", "Failed to prune backup $stale: $e");
           }
         }
 

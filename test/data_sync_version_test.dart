@@ -138,43 +138,119 @@ void main() {
     });
   });
 
-  group('lowestVersionBackup', () {
-    test('returns null when there are no backups', () {
-      expect(lowestVersionBackup(const <String?>[]), isNull);
-    });
-
-    test('ignores non-.venera and null names', () {
-      expect(
-        lowestVersionBackup(['notes.txt', null, '20240-7.android.venera']),
-        '20240-7.android.venera',
-      );
-    });
-
-    test('picks the lowest version, never the lexicographically smallest (#80)',
+  group('backupsBeyondPlatformRetention', () {
+    test('keeps the newest 3 per platform, prunes older own-platform backups',
         () {
-      // Retention rotation must prune the OLDEST (lowest version), never the
-      // newest. Lexicographic order ranks "…-100" below "…-99", so a string
-      // sort would delete version 100 — the latest backup. Numeric order keeps
-      // it and prunes 99.
       expect(
-        '20240-100.android.venera'.compareTo('20240-99.windows.venera') < 0,
-        isTrue, // the trap: string order calls -100 the "smallest"
-      );
-      expect(
-        lowestVersionBackup(
-            ['20240-100.android.venera', '20240-99.windows.venera']),
-        '20240-99.windows.venera',
+        backupsBeyondPlatformRetention(
+          fileNames: [
+            '20236-1.android.venera',
+            '20237-2.android.venera',
+            '20238-3.android.venera',
+            '20239-4.android.venera',
+            'notes.txt', null,
+          ],
+          newFileName: '20240-5.android.venera',
+        ),
+        // New file + v4 + v3 fill the quota; v2 and v1 rotate out.
+        unorderedEquals(['20237-2.android.venera', '20236-1.android.venera']),
       );
     });
 
-    test('picks the lowest among several', () {
+    test('same-day earlier snapshot survives within the quota', () {
+      // Regression against the old one-per-day rule: a good backup uploaded
+      // minutes before a bad one was deleted immediately, leaving nothing to
+      // roll back to. With per-platform retention it stays.
       expect(
-        lowestVersionBackup([
-          '20240-5.android.venera',
-          '20240-3.ios.venera',
-          '20240-12.windows.venera',
-        ]),
-        '20240-3.ios.venera',
+        backupsBeyondPlatformRetention(
+          fileNames: ['20240-5.android.venera'],
+          newFileName: '20240-6.android.venera',
+        ),
+        isEmpty,
+      );
+    });
+
+    test('each platform is capped independently; quotas never interact', () {
+      expect(
+        backupsBeyondPlatformRetention(
+          fileNames: [
+            // android: 3 existing + the new upload → prune the oldest one.
+            '20230-1.android.venera',
+            '20235-6.android.venera',
+            '20236-7.android.venera',
+            // ios: only two, an inactive platform — must never be touched
+            // (the old global 10-cap pruned fleet-wide by lowest version and
+            // would have eaten these first).
+            '20220-2.ios.venera',
+            '20221-3.ios.venera',
+            // windows: exactly at quota.
+            '20233-4.win.venera',
+            '20234-5.win.venera',
+            '20235-8.win.venera',
+          ],
+          newFileName: '20240-9.android.venera',
+        ),
+        ['20230-1.android.venera'],
+      );
+    });
+
+    test('ranks by numeric version, not file-name order', () {
+      // String order calls "…-100" smaller than "…-99"; numeric ranking must
+      // keep 100/99/98 and prune 9.
+      expect(
+        backupsBeyondPlatformRetention(
+          fileNames: [
+            '20240-100.android.venera',
+            '20239-99.android.venera',
+            '20238-98.android.venera',
+            '20237-9.android.venera',
+          ],
+          newFileName: '20240-100.android.venera',
+        ),
+        ['20237-9.android.venera'],
+      );
+    });
+
+    test('never returns the just-uploaded file', () {
+      expect(
+        backupsBeyondPlatformRetention(
+          fileNames: [
+            '20240-1.android.venera',
+            '20240-2.android.venera',
+            '20240-3.android.venera',
+            '20240-4.android.venera',
+          ],
+          // Pathological: the new file has the lowest version. It still must
+          // not be deleted; the surplus comes from the others.
+          newFileName: '20240-1.android.venera',
+        ),
+        isNot(contains('20240-1.android.venera')),
+      );
+    });
+
+    test('legacy names without a platform tag share one bucket and rotate too',
+        () {
+      expect(
+        backupsBeyondPlatformRetention(
+          fileNames: [
+            '1781595522559-1.venera',
+            '1781595522560-2.venera',
+            '1781595522561-3.venera',
+            '1781595522562-4.venera',
+          ],
+          newFileName: '20240-5.android.venera',
+        ),
+        ['1781595522559-1.venera'],
+      );
+    });
+
+    test('empty listing prunes nothing', () {
+      expect(
+        backupsBeyondPlatformRetention(
+          fileNames: const <String?>[],
+          newFileName: '20240-1.android.venera',
+        ),
+        isEmpty,
       );
     });
   });
@@ -272,50 +348,4 @@ void main() {
     });
   });
 
-  group('sameDayOwnBackups', () {
-    test('selects only this platform, same day, excluding the new file', () {
-      expect(
-        sameDayOwnBackups(
-          fileNames: [
-            '20240-5.android.venera', // same day, own platform → prune
-            '20240-7.windows.venera', // same day, OTHER device → keep!
-            '20239-4.android.venera', // other day → keep
-            '20240-8.android.venera', // the new upload itself → keep
-            'notes.txt', null,
-          ],
-          day: '20240',
-          platform: 'android',
-          newFileName: '20240-8.android.venera',
-        ),
-        ['20240-5.android.venera'],
-      );
-    });
-
-    test('another platform backup today is never treated as stale', () {
-      // The old bare "day-" prefix match deleted whatever same-day file it
-      // found first — including a backup another device uploaded today, which
-      // could be the fleet's newest data.
-      expect(
-        sameDayOwnBackups(
-          fileNames: ['20240-9.windows.venera'],
-          day: '20240',
-          platform: 'android',
-          newFileName: '20240-10.android.venera',
-        ),
-        isEmpty,
-      );
-    });
-
-    test('empty listing yields nothing', () {
-      expect(
-        sameDayOwnBackups(
-          fileNames: const <String?>[],
-          day: '20240',
-          platform: 'android',
-          newFileName: '20240-1.android.venera',
-        ),
-        isEmpty,
-      );
-    });
-  });
 }

@@ -19,6 +19,10 @@
 ///   server max (#80).
 /// - Explicit upload (manual button / local import / headless CLI): always
 ///   wins (`force`), preserving "this device is the source of truth" intent.
+/// - Retention: after a successful upload, every platform keeps its
+///   [backupRetentionPerPlatform] newest backups
+///   ([backupsBeyondPlatformRetention]) so a bad upload can be rolled back
+///   from the server's history.
 library;
 
 /// The version number to stamp on a freshly uploaded WebDAV backup.
@@ -91,50 +95,61 @@ int maxBackupVersion(Iterable<String?> fileNames) {
   return max;
 }
 
-/// The backup to prune when capping server retention: the one with the LOWEST
-/// numeric version (the oldest in the version lineage), or null when none parse.
+/// How many backups each platform keeps on the WebDAV server.
 ///
-/// Selecting by numeric version — never by lexicographic file-name order — is
-/// essential here too: string order ranks `…-100.venera` below `…-99.venera`,
-/// so a string sort would delete version 100, i.e. the NEWEST backup that every
-/// other device syncs from. Skips null and non-`.venera` entries. Pure function.
-String? lowestVersionBackup(Iterable<String?> fileNames) {
-  String? lowest;
-  int? lowestVersion;
-  for (final name in fileNames) {
-    if (name == null || !name.endsWith('.venera')) continue;
-    final v = RemoteBackupInfo.fromFileName(name).version;
-    if (lowestVersion == null || v < lowestVersion) {
-      lowestVersion = v;
-      lowest = name;
-    }
-  }
-  return lowest;
-}
+/// Retention is per platform tag (android / ios / win / …) so that one very
+/// active device can never rotate another platform's only backups away, and
+/// every device keeps a few rollback points of its own lineage: if a stale or
+/// misbehaving device publishes bad data as the newest version, the previous
+/// good snapshots are still on the server for a manual restore.
+const int backupRetentionPerPlatform = 3;
 
-/// Stale same-day backups from THIS platform that a new upload supersedes.
+/// Backups to delete so every platform keeps at most [keepPerPlatform] of its
+/// newest versions. The just-uploaded [newFileName] counts toward its
+/// platform's quota and is never returned.
 ///
-/// The uploader keeps at most one backup per day per platform. Selection is
-/// restricted to the uploader's own [platform] on purpose: a bare
-/// `startsWith("<day>-")` match would also delete a backup ANOTHER device
-/// uploaded today — potentially the fleet's newest snapshot — and the deletion
-/// used to happen before the replacement was written, so a failed write
-/// permanently destroyed it. Callers must delete these only AFTER the new
-/// backup is safely on the server. [newFileName] (the just-written backup) is
-/// always excluded. Pure function.
-List<String> sameDayOwnBackups({
+/// Grouping is by the platform tag parsed from each file name; legacy or
+/// foreign names without one share the 'unknown' bucket, so old junk rotates
+/// out too. Ranking within a platform is by numeric version — never file-name
+/// string order (`…-100` outranks `…-99`).
+///
+/// This replaces two older rules with failure modes the fleet actually hit:
+/// one-backup-per-day-per-platform could delete the last good snapshot
+/// uploaded minutes before a bad one, and a global 10-file cap pruned by
+/// lowest version fleet-wide, which starved an inactive platform of every
+/// backup it had. Callers must delete these only AFTER the new backup is
+/// safely on the server. Pure function.
+List<String> backupsBeyondPlatformRetention({
   required Iterable<String?> fileNames,
-  required String day,
-  required String platform,
   required String newFileName,
+  int keepPerPlatform = backupRetentionPerPlatform,
 }) {
-  final result = <String>[];
+  final byPlatform = <String, List<RemoteBackupInfo>>{};
+  void add(String name) {
+    final info = RemoteBackupInfo.fromFileName(name);
+    byPlatform.putIfAbsent(info.platform, () => []).add(info);
+  }
+
+  var listedNewFile = false;
   for (final name in fileNames) {
     if (name == null || !name.endsWith('.venera')) continue;
-    if (name == newFileName) continue;
-    if (!name.startsWith('$day-')) continue;
-    if (RemoteBackupInfo.fromFileName(name).platform != platform) continue;
-    result.add(name);
+    if (name == newFileName) listedNewFile = true;
+    add(name);
+  }
+  // The caller lists the directory BEFORE uploading, so the new backup is
+  // normally not in the listing yet — count it toward its platform's quota.
+  if (!listedNewFile) {
+    add(newFileName);
+  }
+
+  final result = <String>[];
+  for (final group in byPlatform.values) {
+    if (group.length <= keepPerPlatform) continue;
+    group.sort((a, b) => b.version.compareTo(a.version));
+    for (final info in group.skip(keepPerPlatform)) {
+      if (info.fileName == newFileName) continue;
+      result.add(info.fileName);
+    }
   }
   return result;
 }
