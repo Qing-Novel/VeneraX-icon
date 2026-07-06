@@ -103,7 +103,7 @@ class NetworkError extends StatelessWidget {
                           style: OutlinedButton.styleFrom(
                             foregroundColor: context.colorScheme.onPrimaryContainer,
                             side: BorderSide(
-                              color: context.colorScheme.onPrimaryContainer.withOpacity(0.5),
+                              color: context.colorScheme.onPrimaryContainer.withValues(alpha: 0.5),
                             ),
                           ),
                           onPressed: () {
@@ -134,7 +134,7 @@ class NetworkError extends StatelessWidget {
                                         link.comicAuthor!,
                                         style: TextStyle(
                                           fontSize: 12,
-                                          color: context.colorScheme.onPrimaryContainer.withOpacity(0.7),
+                                          color: context.colorScheme.onPrimaryContainer.withValues(alpha: 0.7),
                                         ),
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
@@ -158,7 +158,7 @@ class NetworkError extends StatelessWidget {
                         }),
                         style: TextStyle(
                           fontSize: 12,
-                          color: context.colorScheme.onPrimaryContainer.withOpacity(0.7),
+                          color: context.colorScheme.onPrimaryContainer.withValues(alpha: 0.7),
                         ),
                       ),
                   ],

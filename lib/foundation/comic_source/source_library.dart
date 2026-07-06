@@ -250,11 +250,11 @@ class ComicSourceLibraryManager {
   }
 
   /// Reorders the library at [oldIndex] to [newIndex] in the priority-sorted
-  /// list, then re-densifies priority.
+  /// list, then re-densifies priority. [newIndex] is a final list index
+  /// (already adjusted for the removal, as `onReorderItem` reports).
   static void reorder(int oldIndex, int newIndex) {
     final libraries = all();
     if (oldIndex < 0 || oldIndex >= libraries.length) return;
-    if (newIndex > oldIndex) newIndex -= 1;
     final moved = libraries.removeAt(oldIndex);
     libraries.insert(newIndex.clamp(0, libraries.length), moved);
     save(libraries);

@@ -157,8 +157,8 @@ void showSourceMigrationDialog(BuildContext context, FavoriteItem comic) {
                             tilePadding: EdgeInsets.zero,
                             childrenPadding: const EdgeInsets.only(top: 8),
                             initiallyExpanded: true,
-                            backgroundColor: context.colorScheme.primaryContainer.withOpacity(0.3),
-                            collapsedBackgroundColor: context.colorScheme.primaryContainer.withOpacity(0.3),
+                            backgroundColor: context.colorScheme.primaryContainer.withValues(alpha: 0.3),
+                            collapsedBackgroundColor: context.colorScheme.primaryContainer.withValues(alpha: 0.3),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(8),
                             ),

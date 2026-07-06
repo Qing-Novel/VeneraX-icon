@@ -1185,7 +1185,7 @@ class _SourceLibrariesPageState extends State<SourceLibrariesPage> {
                 context.padding.bottom + 8,
               ),
               buildDefaultDragHandles: false,
-              onReorder: (oldIndex, newIndex) {
+              onReorderItem: (oldIndex, newIndex) {
                 ComicSourceLibraryManager.reorder(oldIndex, newIndex);
                 _reload();
               },

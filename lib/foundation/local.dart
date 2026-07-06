@@ -784,10 +784,10 @@ class LocalManager with ChangeNotifier {
 
   /// Reorder a task within the queue (drag-and-drop, #9). Pauses whatever was
   /// running and re-fills slots from the new order so the user's intended
-  /// priority takes effect immediately.
+  /// priority takes effect immediately. [newIndex] is a final list index
+  /// (already adjusted for the removal, as `onReorderItem` reports).
   void reorderTask(int oldIndex, int newIndex) {
     if (oldIndex < 0 || oldIndex >= downloadingTasks.length) return;
-    if (newIndex > oldIndex) newIndex--;
     if (newIndex < 0 || newIndex >= downloadingTasks.length) return;
     if (oldIndex == newIndex) return;
     final task = downloadingTasks.removeAt(oldIndex);

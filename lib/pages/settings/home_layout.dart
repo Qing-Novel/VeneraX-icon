@@ -20,7 +20,6 @@ class _HomeLayoutSettingsState extends State<HomeLayoutSettings> {
 
   void _onReorder(int oldIndex, int newIndex) {
     setState(() {
-      if (newIndex > oldIndex) newIndex -= 1;
       var item = layout.removeAt(oldIndex);
       layout.insert(newIndex, item);
     });
@@ -71,7 +70,7 @@ class _HomeLayoutSettingsState extends State<HomeLayoutSettings> {
               buildDefaultDragHandles: false,
               padding: const EdgeInsets.symmetric(vertical: 4),
               itemCount: layout.length,
-              onReorder: _onReorder,
+              onReorderItem: _onReorder,
               itemBuilder: (context, index) {
                 var config = layout[index];
                 var meta = homeSectionMetaById(config.id)!;
@@ -164,7 +163,6 @@ class _ImageFavoritesTabsSettingsState
 
   void _onReorder(int oldIndex, int newIndex) {
     setState(() {
-      if (newIndex > oldIndex) newIndex -= 1;
       var item = tabs.removeAt(oldIndex);
       tabs.insert(newIndex, item);
     });
@@ -222,7 +220,7 @@ class _ImageFavoritesTabsSettingsState
               buildDefaultDragHandles: false,
               padding: const EdgeInsets.symmetric(vertical: 4),
               itemCount: tabs.length,
-              onReorder: _onReorder,
+              onReorderItem: _onReorder,
               itemBuilder: (context, index) {
                 var config = tabs[index];
                 var meta = imageFavoritesTabMetaById(config.id)!;

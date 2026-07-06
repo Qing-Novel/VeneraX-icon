@@ -116,7 +116,6 @@ class _HomePageState extends State<HomePage> {
 
   void _onReorder(int oldIndex, int newIndex) {
     setState(() {
-      if (newIndex > oldIndex) newIndex -= 1;
       var item = layout.removeAt(oldIndex);
       layout.insert(newIndex, item);
     });
@@ -133,7 +132,7 @@ class _HomePageState extends State<HomePage> {
       slivers.add(
         SliverReorderableList(
           itemCount: layout.length,
-          onReorder: _onReorder,
+          onReorderItem: _onReorder,
           itemBuilder: (context, index) {
             var config = layout[index];
             var meta = homeSectionMetaById(config.id)!;

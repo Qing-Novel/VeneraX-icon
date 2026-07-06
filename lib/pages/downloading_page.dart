@@ -117,7 +117,7 @@ class _DownloadingPageState extends State<DownloadingPage> {
                   )
                 : ReorderableListView.builder(
                     itemCount: tasks.length,
-                    onReorder: (oldIndex, newIndex) {
+                    onReorderItem: (oldIndex, newIndex) {
                       LocalManager().reorderTask(oldIndex, newIndex);
                     },
                     itemBuilder: (context, i) {
