@@ -22,10 +22,10 @@ A cross-platform manga/comic reader.
 >
 > By downloading, copying, modifying, or using this project, you are deemed to have read and accepted this disclaimer. The maintainers reserve the right to modify or supplement this disclaimer at any time.
 
-## Features
+## New Features & Improvements
 
 - [x] Improved WebDAV backup & sync
-- [x] Windows auto-updater (with fallback scripts) & Android APK auto-update
+- [x] Windows and Android APK update checks
 - [x] Seamless continuous-chapter reading
 - [x] Improved local library, follow-updates & favorites
 - [x] Task system with background execution and related views
@@ -35,8 +35,12 @@ A cross-platform manga/comic reader.
 - [x] Android background downloads, follow-update checks, comic import/export
 - [x] Windows tray minimize
 - [x] Simple image-quality enhancement
-- [x] Various UI refinements
+- [x] Various UI & UX refinements
 - [x] Read-later
+- [x] Customizable automatic history cleanup
+- [x] Quick WebDAV config sync across devices via QR code
+- [x] Long-press to reorder the home screen's function modules
+- [x] Multiple library management
 
 ## Quick Start
 
