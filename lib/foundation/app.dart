@@ -7,6 +7,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:venera/foundation/download_network_guard.dart';
 import 'package:venera/foundation/history.dart';
+import 'package:venera/foundation/log.dart';
 import 'package:venera/foundation/read_later.dart';
 
 import 'appdata.dart';
@@ -115,7 +116,18 @@ class _App {
       domain.init(dataPath),
       local.init(),
     ];
-    await Future.wait(futures);
+    // One store failing must not abort its siblings: an unguarded Future.wait
+    // rejected on the first error and left every later store uninitialized —
+    // the "init failed but the app carried on" startup chain.
+    await Future.wait(
+      futures.map((future) async {
+        try {
+          await future;
+        } catch (e, s) {
+          Log.error("init", "$e\n$s");
+        }
+      }),
+    );
     // Begin watching connectivity so "WiFi only" downloads pause on metered
     // networks. No-op while the setting is off (#15).
     DownloadNetworkGuard.instance.start();

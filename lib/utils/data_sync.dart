@@ -52,25 +52,24 @@ class DataSync with ChangeNotifier {
   }
 
   /// Runs the initial WebDAV download, but only after heavy initialization has
-  /// finished. [downloadData] may import a backup, and [importAppData] closes
-  /// and swaps the favorites/history/local/domain SQLite files. Running that
-  /// concurrently with `App.initComponents()` (which is still opening those very
-  /// databases) raced into a native use-after-close crash on iOS that repeated
-  /// on every launch — the imported backup is only "committed" (dataVersion
-  /// advanced) after a successful import, so a crash mid-import re-downloaded and
-  /// re-crashed forever. Waiting for init to settle first removes that race; the
-  /// swap itself is also atomic against live UI reads (see `_replaceDatabaseFile`
-  /// in data.dart), so the import is safe once the app is up.
+  /// finished. [downloadData] may import a backup; running that concurrently
+  /// with `App.initComponents()` (which is still opening those very databases)
+  /// raced into a native use-after-close crash on iOS that repeated on every
+  /// launch — the imported backup is only "committed" (dataVersion advanced)
+  /// after a successful import, so a crash mid-import re-downloaded and
+  /// re-crashed forever. Waiting for init to settle first removes that race;
+  /// the apply itself now restores content IN PLACE via the SQLite backup API
+  /// (see `overwriteDatabaseContent`), so other live connections keep valid
+  /// handles throughout.
   void _runStartupDownload() async {
     // The timeout is a safety net for environments that never complete
     // deferredInitCompleter. When it fires we SKIP this launch's auto
-    // download instead of proceeding: proceeding would let importAppData swap
-    // the very SQLite files a still-running init is opening — the silent
-    // native crash-at-launch class (crashes only with network on, heals after
-    // one successful sync aligns versions so later launches import nothing).
-    // A slow proxy can legitimately hold deferred init (comic script inits do
-    // network) past the window; syncing a bit late is better than crashing.
-    // The headless CLI completes the gate explicitly before its own sync.
+    // download instead of proceeding: applying a backup needs fully
+    // initialized stores (the in-place restore writes into their live
+    // connections). A slow proxy can legitimately hold deferred init (comic
+    // script inits do network) past the window; syncing a bit late is better
+    // than failing. The headless CLI completes the gate explicitly before its
+    // own sync.
     try {
       await deferredInitCompleter.future.timeout(const Duration(seconds: 60));
     } catch (_) {
@@ -237,6 +236,11 @@ class DataSync with ChangeNotifier {
 
   bool _isSyncingImages = false;
   bool get isSyncingImages => _isSyncingImages;
+
+  /// True while a downloaded/imported backup is being applied to the local
+  /// stores. Concurrent writers (the follow-update checker above all) consult
+  /// this to hold off, so their writes don't interleave with the restore.
+  bool get isApplyingBackup => _isApplyingBackup;
 
   Timer? _pendingAutoUpload;
 
@@ -620,15 +624,15 @@ class DataSync with ChangeNotifier {
   }
 
   Future<Res<bool>> downloadData() async {
-    // Never apply a backup while heavy init is still opening the very SQLite
-    // files importAppData swaps — that race was the iOS startup crash loop.
+    // Never apply a backup while heavy init is still bringing up the very
+    // stores importAppData restores into — that race was the iOS startup
+    // crash loop back when the import swapped database files. The restore is
+    // in-place now, but it still requires initialized stores.
     // _runStartupDownload already waits, but downloads can also be reached
     // early via the #86 catch-up path (auto upload converted to download);
     // gate ALL of them here. Headless completes the completer right after its
     // own init, so CLI runs don't stall on the timeout. If the gate times out
-    // we FAIL the download instead of proceeding — proceeding re-opened the
-    // exact crash the gate exists to prevent whenever init ran long (slow
-    // proxy holding comic script inits, etc.); a later download retries.
+    // we FAIL the download instead of proceeding; a later download retries.
     if (!deferredInitCompleter.isCompleted) {
       try {
         await deferredInitCompleter.future.timeout(const Duration(seconds: 60));
@@ -640,6 +644,19 @@ class DataSync with ChangeNotifier {
         _lastError = 'App initialization not settled';
         return const Res.error('App initialization not settled');
       }
+    }
+    if (!coreDataStoresReady) {
+      // The completer above only proves init finished ATTEMPTING. When a
+      // component failed (a corrupt cookie.db once took the whole deferred
+      // init down), applying a backup over uninitialized stores half-applies
+      // data and storms LateInitializationErrors — refuse; the next launch
+      // (with the store recovered) retries.
+      Log.warning(
+        "Data Sync",
+        "Core data stores not ready; refusing to apply a backup",
+      );
+      _lastError = 'App initialization failed';
+      return const Res.error('App initialization failed');
     }
     if (_haveWaitingTask) return const Res(true);
     // Also wait for image sync: applying a backup swaps local.db, which image

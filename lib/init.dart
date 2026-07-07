@@ -56,14 +56,22 @@ final Completer<void> deferredInitCompleter = Completer<void>();
 
 Future<void> initDeferred() async {
   try {
-    await SingleInstanceCookieJar.createInstance();
+    // Every step is individually guarded: one component failing must not skip
+    // the rest. A corrupt cookie.db once threw here before App.initComponents
+    // ever ran — yet the finally still completed the gate, so the app carried
+    // on believing init had succeeded: the startup sync applied a backup over
+    // uninitialized stores and the follow-update checker hit
+    // LateInitializationError inside widget builds. The completer only means
+    // "init finished attempting"; callers that need working stores must check
+    // [coreDataStoresReady].
+    await SingleInstanceCookieJar.createInstance().wait();
     await initPlatformServices().wait();
     var futures = [
-      App.initComponents(),
+      App.initComponents().wait(),
       TagsTranslation.readData().wait(),
       JsEngine().init().wait(),
       ComicSourceManager().init().wait(),
-      OpenCC.init(),
+      OpenCC.init().wait(),
       ImageEnhanceShader.instance.preload().wait(),
     ];
     await Future.wait(futures);
