@@ -1636,6 +1636,65 @@ class _CallbackSettingState extends State<_CallbackSetting> {
   }
 }
 
+/// Two-line select setting for source options. The title sits on its own line
+/// and the current value on the subtitle, so a long option value (e.g. a full
+/// domain-line description) can wrap instead of squeezing the title into a
+/// single vertical column of characters (#110).
+class _SourceSelectSetting extends StatelessWidget {
+  const _SourceSelectSetting({
+    required this.title,
+    required this.current,
+    required this.values,
+    required this.onTap,
+  });
+
+  final String title;
+
+  final String current;
+
+  final List<String> values;
+
+  final void Function(int index) onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      title: Text(title),
+      subtitle: Text(current),
+      trailing: const Icon(Icons.arrow_drop_down),
+      onTap: () {
+        var renderBox = context.findRenderObject() as RenderBox;
+        var offset = renderBox.localToGlobal(Offset.zero);
+        var size = renderBox.size;
+        var rect = offset & size;
+        showMenu(
+          elevation: 3,
+          color: context.brightness == Brightness.light
+              ? const Color(0xFFF6F6F6)
+              : const Color(0xFF1E1E1E),
+          context: context,
+          position: RelativeRect.fromRect(
+            rect,
+            Offset.zero & MediaQuery.of(context).size,
+          ),
+          items: [
+            for (var i = 0; i < values.length; i++)
+              PopupMenuItem(
+                value: i,
+                height: App.isMobile ? 46 : 40,
+                child: Text(values[i]),
+              ),
+          ],
+        ).then((value) {
+          if (value != null) {
+            onTap(value);
+          }
+        });
+      },
+    );
+  }
+}
+
 class _SliverComicSource extends StatefulWidget {
   const _SliverComicSource({
     super.key,
@@ -2113,22 +2172,19 @@ class _SliverComicSourceState extends State<_SliverComicSource> {
                 )['text'] ??
                 current;
           }
-          yield ListTile(
-            title: Text((item.value['title'] as String).ts(source.key)),
-            trailing: Select(
-              current: (current as String).ts(source.key),
-              values: (item.value['options'] as List)
-                  .map<String>(
-                    (e) => ((e['text'] ?? e['value']) as String).ts(source.key),
-                  )
-                  .toList(),
-              onTap: (i) {
-                source.data['settings'][key] =
-                    item.value['options'][i]['value'];
-                source.saveData();
-                setState(() {});
-              },
-            ),
+          yield _SourceSelectSetting(
+            title: (item.value['title'] as String).ts(source.key),
+            current: (current as String).ts(source.key),
+            values: (item.value['options'] as List)
+                .map<String>(
+                  (e) => ((e['text'] ?? e['value']) as String).ts(source.key),
+                )
+                .toList(),
+            onTap: (i) {
+              source.data['settings'][key] = item.value['options'][i]['value'];
+              source.saveData();
+              setState(() {});
+            },
           );
         } else if (type == "switch") {
           var current = source.data['settings'][key] ?? item.value['default'];
