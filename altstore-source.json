@@ -20,7 +20,7 @@
           "date": "2026-07-10",
           "localizedDescription": "## What's Changed\n\n### Added\n- App lock now supports PIN, password, and pattern unlock, so devices without biometric hardware can still protect the app.\n- Reading display settings now include a comment font size option.\n- When a chapter fails to load, you can now tap to retry.\n\n### Fixed\n- Fixed a translucent/white bar appearing at the bottom of the screen on some devices.\n- Fixed an occasional crash on restart after syncing.\n\n**Full Changelog**: https://github.com/Kyosee/venera/compare/v2.1.6...v2.1.7",
           "downloadURL": "https://github.com/Kyosee/venera/releases/download/v2.1.7/venera-ios-2.1.7%2B222.ipa",
-          "size": 23106998,
+          "size": 23113158,
           "minOSVersion": "14.0"
         },
         {
