@@ -472,7 +472,7 @@ class ImageFavoriteManager with ChangeNotifier {
         if (token == null) {
           return Future.value(_computeImageFavorites());
         }
-        return DatabaseRestoreGuard.instance.guardedRead(() {
+        return DatabaseGateway.instance.guardedRead(() {
           return Isolate.run(() async {
             BackgroundIsolateBinaryMessenger.ensureInitialized(token);
             await App.init();

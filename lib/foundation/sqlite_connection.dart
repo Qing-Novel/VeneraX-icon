@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:sqlite3/common.dart';
 import 'package:sqlite3/sqlite3.dart';
 
 Database openSqliteDatabase(String path) {
@@ -18,69 +17,38 @@ Database openSqliteDatabase(String path) {
 
 void closeSqliteDatabase(String path) {}
 
-/// Serializes an in-place database restore against every background-isolate
-/// reader in this process.
+/// Single owner of database access ordering for this process.
 ///
-/// A restore ([overwriteDatabaseContent]) runs SQLite's online backup on the
-/// live connection and rebuilds the target's `-wal`/`-shm` sidecars. Any OTHER
-/// connection that still has those files memory-mapped — the image-favorites
-/// compute isolate, async folder/history loads, a fresh `withDatabase` open —
-/// then reads through a now-dangling pointer, faulting inside `btreeParseCellPtr`
-/// / `walIndexReadHdr` and corrupting the process heap. That is the iOS
-/// "sync then relaunch" crash: the older fixes only held off startup init and
-/// follow-update writers, never these readers.
+/// Two distinct hazards share one root cause — several native `sqlite3` handles
+/// bound to the same file share one process C-heap and one `-wal`/`-shm` memory
+/// mapping:
 ///
-/// Readers dispatch through [guardedRead]; a restore [beginRestore]s (waiting
-/// for in-flight reads to drain and blocking new ones), runs, then [endRestore]s.
-/// Single-threaded Dart makes the check→count transitions atomic (no await
-/// between them), so no reader can slip past once a restore is armed.
-class DatabaseRestoreGuard {
-  DatabaseRestoreGuard._();
+///  1. Concurrent background reads. Startup fires several isolate reads at once
+///     (favorites hash, async history/folder load, image-favorites stats); each
+///     opens its own handle in a fresh `Isolate.run`. On iOS, overlapping
+///     opens/steps/`dispose`s corrupt the shared heap — an `abort()` in
+///     libmalloc ("pointer being freed was not allocated") ~1s into launch.
+///
+///  2. A restore that swaps a database file out from under a live reader.
+///
+/// Both are removed by routing every access through one serial chain. Reads
+/// dispatch through [guardedRead] (so no two isolate opens overlap); a restore
+/// runs through [runExclusive], which drains every in-flight read and blocks
+/// new ones for the whole close→replace→reopen sequence, guaranteeing no handle
+/// is open against a file while it is being replaced. Single-threaded Dart
+/// makes the enqueue transitions atomic, so nothing slips past once queued.
+class DatabaseGateway {
+  DatabaseGateway._();
 
-  static final DatabaseRestoreGuard instance = DatabaseRestoreGuard._();
+  static final DatabaseGateway instance = DatabaseGateway._();
 
   /// Tail of the serialized-access chain. Every [guardedRead] and every
-  /// restore ([beginRestore]→[endRestore]) appends its critical section here,
-  /// so at most one of them touches the shared DB files at a time.
-  ///
-  /// This is not only about restore-vs-read: two background-isolate reads
-  /// running *concurrently* (favorites hash, async history/folder load,
-  /// image-favorites stats — all fired during startup) each open their own
-  /// `sqlite3` handle in a fresh `Isolate.run`. On iOS those handles share one
-  /// process C-heap, and overlapping opens/steps/`dispose`s corrupt it — an
-  /// `abort()` in libmalloc ("pointer being freed was not allocated") ~1s into
-  /// launch. Serializing every guarded op removes that race entirely; the ops
-  /// are short, so the added latency is negligible.
+  /// [runExclusive] window appends its critical section here, so at most one of
+  /// them touches the shared DB files at a time.
   Future<void> _tail = Future.value();
 
-  /// Set while a restore holds the chain open between [beginRestore] and
-  /// [endRestore]; completing it releases the chain for the next waiter.
-  Completer<void>? _restoreGate;
-
-  /// True while a restore holds the databases exclusively.
-  bool get isRestoring => _restoreGate != null;
-
-  /// Arms the guard: waits for the chain to drain (any in-flight guarded read
-  /// or prior restore finishes first), then holds it open until [endRestore].
-  /// The caller's restore work runs between the two calls. Always pair with
-  /// [endRestore] in a `finally`, or the chain stays blocked forever.
-  Future<void> beginRestore() async {
-    final previous = _tail;
-    final gate = Completer<void>();
-    _tail = gate.future;
-    await previous;
-    _restoreGate = gate;
-  }
-
-  /// Releases the guard, letting the next queued op run.
-  void endRestore() {
-    final gate = _restoreGate;
-    _restoreGate = null;
-    gate?.complete();
-  }
-
   /// Runs [read] (typically an `Isolate.run` opening one of the shared DB
-  /// files) once every earlier guarded op — reads and restores alike — has
+  /// files) once every earlier queued op — reads and restores alike — has
   /// finished. Serialized, so no two isolate DB ops overlap.
   Future<T> guardedRead<T>(Future<T> Function() read) {
     final previous = _tail;
@@ -88,68 +56,89 @@ class DatabaseRestoreGuard {
     _tail = done.future;
     return previous.then((_) => read()).whenComplete(done.complete);
   }
+
+  /// Runs [body] with exclusive access to every database: waits for all
+  /// in-flight [guardedRead]s to drain, then blocks new ones until [body]
+  /// completes. Restores use this to close all connections, replace the files
+  /// on disk, and reopen — with no other handle alive at the swap point.
+  Future<T> runExclusive<T>(Future<T> Function() body) async {
+    final previous = _tail;
+    final gate = Completer<void>();
+    _tail = gate.future;
+    await previous;
+    try {
+      return await body();
+    } finally {
+      gate.complete();
+    }
+  }
 }
 
-/// Replaces [target]'s entire content — schema included — with the database
-/// file at [sourcePath], IN PLACE via SQLite's online backup API.
+/// Replaces each target database file (key) with its source file (value) by
+/// plain file copy, discarding stale `-wal`/`-shm` sidecars. All-or-nothing.
 ///
-/// The target file is never deleted or renamed, so every other connection in
-/// this process keeps a valid handle throughout: background-isolate readers
-/// (image-favorites compute, async folder loads), a mid-flight follow-update
-/// check, or a leftover hot-restart handle. The old close→delete→rename→reopen
-/// swap crashed natively whenever such a second connection was alive (the
-/// startup-sync crash loop on iOS) and failed with errno 32 on Windows, where
-/// SQLite opens files without FILE_SHARE_DELETE.
+/// The caller MUST have closed every connection to the targets first (restores
+/// run inside [DatabaseGateway.runExclusive], which additionally blocks the
+/// background-isolate readers). Because no SQLite handle is open during the
+/// swap, there is no live memory mapping to dangle and no online-backup step to
+/// churn sidecars — the native heap corruption and the Windows FILE_SHARE_DELETE
+/// error that plagued the old in-place approach cannot occur. The copied files
+/// may carry an older (or foreign) schema, so re-running migrations and
+/// rebuilding in-memory caches after reopening is the caller's job.
 ///
-/// Copies in a single backup step: WAL readers on other connections keep their
-/// snapshot; writers briefly queue on their busy_timeout. The copied file may
-/// carry an older (or foreign) schema — re-running migrations and rebuilding
-/// in-memory caches afterwards is the caller's job.
-Future<void> overwriteDatabaseContent(
-  CommonDatabase target,
-  String sourcePath,
-) async {
-  final wasWal =
-      target.select('PRAGMA journal_mode;').first.values.first.toString() ==
-      'wal';
-  // Collapse the target's WAL into the main file before the page-level copy.
-  // A populated `-wal` left standing while backup rewrites every page — then
-  // the WAL re-assertion below — churns the `-shm`/`-wal` sidecars; a reader
-  // on another connection that mapped the old sidecars then faults on a
-  // dangling page. Truncating first (best-effort: needs a brief write lock)
-  // means there is no stale WAL segment to rebuild around. The restore runs
-  // under DatabaseRestoreGuard, so no other connection should hold them anyway.
-  //
-  // Leaving WAL mode entirely (→ rollback journal) is REQUIRED, not just
-  // hygiene: SQLite's online backup refuses to change the destination's page
-  // size while the destination is in WAL mode, throwing SQLITE_READONLY
-  // ("attempt to write a readonly database", code 8). A backup zip produced by
-  // an older/foreign build can carry a different page size than the freshly
-  // created 4096-byte WAL store here, so a WebDAV restore on a clean install
-  // died on the first WAL target (history.db) before this. In DELETE mode the
-  // backup is free to resize the destination; we re-assert WAL afterwards.
-  if (wasWal) {
+/// Every source is validated as a readable SQLite database before anything is
+/// touched, and the originals are set aside and restored if any step fails, so
+/// a truncated backup entry or a mid-way error can never leave a half-restored
+/// data directory.
+void restoreDatabaseFiles(Map<String, String> swaps) {
+  for (final sourcePath in swaps.values) {
+    final db = sqlite3.open(sourcePath, mode: OpenMode.readOnly);
     try {
-      target.execute('PRAGMA wal_checkpoint(TRUNCATE);');
-    } catch (_) {}
-    try {
-      target.execute('PRAGMA journal_mode = DELETE;');
-    } catch (_) {}
+      db.select('PRAGMA schema_version;');
+    } finally {
+      db.dispose();
+    }
   }
-  final source = sqlite3.open(sourcePath);
+  const suffixes = ['', '-wal', '-shm'];
+  final setAside = <String, String>{};
   try {
-    await source.backup(target as Database, nPage: -1).drain();
-  } finally {
-    source.dispose();
+    for (final entry in swaps.entries) {
+      final targetPath = entry.key;
+      for (final suffix in suffixes) {
+        final file = File('$targetPath$suffix');
+        if (!file.existsSync()) continue;
+        final asidePath = '$targetPath$suffix.restore-aside';
+        final aside = File(asidePath);
+        if (aside.existsSync()) {
+          aside.deleteSync();
+        }
+        file.renameSync(asidePath);
+        setAside['$targetPath$suffix'] = asidePath;
+      }
+      File(entry.value).copySync(targetPath);
+    }
+  } catch (e) {
+    // Roll back: remove whatever was copied, put the originals back.
+    for (final targetPath in swaps.keys) {
+      for (final suffix in suffixes) {
+        final path = '$targetPath$suffix';
+        try {
+          final current = File(path);
+          if (current.existsSync()) {
+            current.deleteSync();
+          }
+          final asidePath = setAside[path];
+          if (asidePath != null) {
+            File(asidePath).renameSync(path);
+          }
+        } catch (_) {}
+      }
+    }
+    rethrow;
   }
-  // A page-level copy brings the source's journal-mode header along; re-assert
-  // WAL (only where it was already in use — local.db deliberately isn't) so a
-  // backup exported from a rollback-journal database can't silently downgrade
-  // this store's journaling. Best-effort: switching modes needs a brief
-  // exclusive lock and may be denied while another connection reads.
-  if (wasWal) {
+  for (final asidePath in setAside.values) {
     try {
-      target.execute('PRAGMA journal_mode = WAL;');
+      File(asidePath).deleteSync();
     } catch (_) {}
   }
 }

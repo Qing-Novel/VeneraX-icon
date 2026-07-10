@@ -32,7 +32,7 @@ class CacheManager {
     // connection the main isolate is still using (double-free / use-after-free,
     // a native heap abort). Route through the restore guard's serial chain so
     // this scan never runs concurrently with another background DB isolate.
-    var res = await DatabaseRestoreGuard.instance.guardedRead(() {
+    var res = await DatabaseGateway.instance.guardedRead(() {
       return Isolate.run(() async {
         int totalSize = 0;
         List<String> unmanagedFiles = [];

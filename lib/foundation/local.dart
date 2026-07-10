@@ -408,14 +408,20 @@ class LocalManager with ChangeNotifier {
   }
 
   /// Replaces the local-library database content with the file at
-  /// [sourcePath] without closing or swapping the underlying file — see
-  /// [overwriteDatabaseContent]. Path configuration, download-task state and
-  /// comic-source init are process-level and deliberately not re-run here.
+  /// [sourcePath] by closing the connection, swapping the file, and
+  /// reopening — see [restoreDatabaseFiles]. Path configuration, download-task
+  /// state and comic-source init are process-level and deliberately not
+  /// re-run here.
   Future<void> restoreFrom(String sourcePath) async {
     if (!isInitialized) {
       throw StateError("LocalManager is not initialized; cannot restore");
     }
-    await overwriteDatabaseContent(_db, sourcePath);
+    _db.dispose();
+    try {
+      restoreDatabaseFiles({'${App.dataPath}/local.db': sourcePath});
+    } finally {
+      _db = sqlite3.open('${App.dataPath}/local.db');
+    }
     _ensureSchema();
     notifyListeners();
   }

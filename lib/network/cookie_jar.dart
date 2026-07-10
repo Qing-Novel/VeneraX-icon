@@ -84,10 +84,16 @@ class CookieJarSql {
     ''');
   }
 
-  /// Replaces cookie content with the database at [sourcePath] without
-  /// closing or swapping the underlying file — see [overwriteDatabaseContent].
+  /// Replaces cookie content with the database file at [sourcePath] by
+  /// closing the connection, swapping the file, and reopening — see
+  /// [restoreDatabaseFiles]. Runs inside the caller's exclusive window.
   Future<void> restoreFrom(String sourcePath) async {
-    await overwriteDatabaseContent(_db, sourcePath);
+    _db.dispose();
+    try {
+      restoreDatabaseFiles({path: sourcePath});
+    } finally {
+      _db = openSqliteDatabase(path);
+    }
     _ensureTable();
   }
 

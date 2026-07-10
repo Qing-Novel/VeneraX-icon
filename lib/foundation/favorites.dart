@@ -387,8 +387,10 @@ class LocalFavoritesManager with ChangeNotifier {
     });
   }
 
-  /// Replaces this store's content with the database at [sourcePath] without
-  /// closing or swapping the underlying file — see [overwriteDatabaseContent].
+  /// Replaces this store's content with the database file at [sourcePath] by
+  /// closing the connection, swapping the file, and reopening — see
+  /// [restoreDatabaseFiles]. Runs inside the caller's exclusive window, so no
+  /// background-isolate reader can hold the old file during the swap.
   /// Callers wanting the #106 semantics must snapshot/merge follow-update
   /// bookkeeping around this call ([snapshotUpdateInfo] / [mergeUpdateInfo]).
   Future<void> restoreFrom(String sourcePath) async {
@@ -397,7 +399,12 @@ class LocalFavoritesManager with ChangeNotifier {
         "LocalFavoritesManager is not initialized; cannot restore",
       );
     }
-    await overwriteDatabaseContent(_db, sourcePath);
+    _db.dispose();
+    try {
+      restoreDatabaseFiles({_dbPath: sourcePath});
+    } finally {
+      _db = openSqliteDatabase(_dbPath);
+    }
     // Re-run the schema upkeep init() performs: the imported file may come
     // from an older version or lack the bookkeeping tables entirely.
     _db.execute("""
@@ -451,7 +458,7 @@ class LocalFavoritesManager with ChangeNotifier {
     List<String> folders,
     String dbPath,
   ) {
-    return DatabaseRestoreGuard.instance.guardedRead(() {
+    return DatabaseGateway.instance.guardedRead(() {
       return Isolate.run(() {
         return withDatabase(dbPath, (db) async => _queryHashedIds(folders, db));
       });
@@ -794,7 +801,7 @@ class LocalFavoritesManager with ChangeNotifier {
     String folder,
     String dbPath,
   ) {
-    return DatabaseRestoreGuard.instance.guardedRead(() {
+    return DatabaseGateway.instance.guardedRead(() {
       return Isolate.run(() {
         return withDatabase(
           dbPath,
@@ -835,7 +842,7 @@ class LocalFavoritesManager with ChangeNotifier {
     List<String> folders,
     String dbPath,
   ) {
-    return DatabaseRestoreGuard.instance.guardedRead(() {
+    return DatabaseGateway.instance.guardedRead(() {
       return Isolate.run(() {
         return withDatabase(dbPath, (db) async => _queryAllComics(folders, db));
       });
@@ -1986,7 +1993,7 @@ class LocalFavoritesManager with ChangeNotifier {
     String folder,
     String dbPath,
   ) {
-    return DatabaseRestoreGuard.instance.guardedRead(() {
+    return DatabaseGateway.instance.guardedRead(() {
       return Isolate.run(() {
         return withDatabase(
           dbPath,

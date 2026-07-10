@@ -58,15 +58,14 @@ class DataSync with ChangeNotifier {
   /// launch — the imported backup is only "committed" (dataVersion advanced)
   /// after a successful import, so a crash mid-import re-downloaded and
   /// re-crashed forever. Waiting for init to settle first removes that race;
-  /// the apply itself now restores content IN PLACE via the SQLite backup API
-  /// (see `overwriteDatabaseContent`), so other live connections keep valid
-  /// handles throughout.
+  /// the apply itself restores each store by closing its connection, swapping
+  /// the file, and reopening, all inside a gateway exclusive window so no other
+  /// handle is alive against a file while it is replaced.
   void _runStartupDownload() async {
     // The timeout is a safety net for environments that never complete
     // deferredInitCompleter. When it fires we SKIP this launch's auto
     // download instead of proceeding: applying a backup needs fully
-    // initialized stores (the in-place restore writes into their live
-    // connections). A slow proxy can legitimately hold deferred init (comic
+    // initialized stores (the restore closes and reopens their connections). A slow proxy can legitimately hold deferred init (comic
     // script inits do network) past the window; syncing a bit late is better
     // than failing. The headless CLI completes the gate explicitly before its
     // own sync.

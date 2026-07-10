@@ -151,18 +151,23 @@ class DomainDatabase {
     }
   }
 
-  /// Replaces this store's content with the database at [sourcePath] without
-  /// closing or swapping the underlying file — see [overwriteDatabaseContent].
+  /// Replaces this store's content with the database file at [sourcePath] by
+  /// closing the connection, swapping the file, and reopening — see
+  /// [restoreDatabaseFiles]. Runs inside the caller's exclusive window.
   Future<void> restoreFrom(String sourcePath) async {
-    final database = _db;
-    if (database == null) {
+    final dbPath = _dbPath;
+    if (_db == null || dbPath == null) {
       throw StateError('DomainDatabase is not initialized; cannot restore');
     }
-    await overwriteDatabaseContent(database, sourcePath);
-    // The imported file may carry an older schema; the open-time pipeline is
-    // idempotent, so re-run it (pragmas, missing tables/columns, seeds).
-    configure(database);
-    createSchema(database);
+    _db!.dispose();
+    _db = null;
+    try {
+      restoreDatabaseFiles({dbPath: sourcePath});
+    } finally {
+      // The imported file may carry an older schema; the open-time pipeline is
+      // idempotent, so the reopen re-runs it (pragmas, tables/columns, seeds).
+      _db = _openDatabase(dbPath);
+    }
   }
 
   static void _backupDatabaseFiles(String dbPath) {

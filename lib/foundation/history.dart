@@ -285,23 +285,27 @@ class HistoryManager with ChangeNotifier {
     }
   }
 
-  /// Replaces this store's content with the database at [sourcePath] without
-  /// closing or swapping the underlying file — see [overwriteDatabaseContent].
-  /// The old close→replace→reopen swap crashed natively when a second
-  /// connection (image-favorites compute isolate, async readers) still held
-  /// the old file, and a mid-way failure left this manager closed for the
-  /// rest of the session.
+  /// Replaces this store's content with the database file at [sourcePath] by
+  /// closing the connection, swapping the file, and reopening — see
+  /// [restoreDatabaseFiles]. The dispose→replace→reopen sequence runs with no
+  /// `await` in between, so no main-isolate read can observe a closed handle;
+  /// background-isolate reads are held off by the surrounding exclusive window.
   Future<void> restoreFrom(String sourcePath) async {
     if (!isInitialized) {
       throw StateError("HistoryManager is not initialized; cannot restore");
     }
-    await overwriteDatabaseContent(_db, sourcePath);
+    _clearCache();
+    _db.dispose();
+    try {
+      restoreDatabaseFiles({_dbPath: sourcePath});
+    } finally {
+      _db = openSqliteDatabase(_dbPath);
+    }
     _ensureSchema();
     _isCorrupted = false;
     // image_favorites lives in this same database file: re-ensure its table
     // exists and rerun its cache-key fix against the imported rows.
     ImageFavoriteManager().init();
-    _clearCache();
     updateCache();
     notifyListeners();
   }
@@ -374,7 +378,7 @@ class HistoryManager with ChangeNotifier {
   }
 
   static Future<void> _addHistoryAsync(String dbPath, History newItem) {
-    return DatabaseRestoreGuard.instance.guardedRead(() {
+    return DatabaseGateway.instance.guardedRead(() {
       return Isolate.run(() {
         return withDatabase(dbPath, (db) async {
           db.execute(_insertHistorySql, _historySqlArgs(newItem));
@@ -642,7 +646,7 @@ class HistoryManager with ChangeNotifier {
   static Future<List<History>> _getAllHistoryAsync(String dbPath) {
     // Runs in a separate isolate. Only [dbPath] (a String) is captured, never
     // `this` — the manager holds a live DB handle that can't cross isolates.
-    return DatabaseRestoreGuard.instance.guardedRead(() {
+    return DatabaseGateway.instance.guardedRead(() {
       return Isolate.run(() {
         return withDatabase(dbPath, (db) async => _queryAllHistory(db));
       });

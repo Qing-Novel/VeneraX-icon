@@ -274,6 +274,11 @@ Future<File> exportAppData([bool sync = true]) async {
   if (await cacheFile.exists()) {
     await cacheFile.delete();
   }
+  // Serialize the export against database restores and background-isolate
+  // reads: the checkpoints below open short-lived second connections, and the
+  // zip step reads the database files directly — neither may overlap a
+  // close→swap→reopen restore window.
+  await DatabaseGateway.instance.guardedRead(() async {
   try {
     if (App.domain.isInitialized) {
       App.domain.db.execute('PRAGMA wal_checkpoint(TRUNCATE);');
@@ -346,6 +351,7 @@ Future<File> exportAppData([bool sync = true]) async {
       }
     }
     zipFile.close();
+  });
   });
   return cacheFile;
 }
@@ -481,11 +487,10 @@ Future<void> _importAppDataLocked(
       }
     }
     // Hold every background-isolate DB reader off while the store restores run:
-    // each restoreFrom rebuilds its file's -wal/-shm, and a reader mapping the
-    // old sidecars faults natively (the iOS sync-relaunch crash). beginRestore
-    // also drains reads already dispatched to an isolate before returning.
-    await DatabaseRestoreGuard.instance.beginRestore();
-    try {
+    // each restore closes its connection, swaps the file, and reopens. Running
+    // this inside runExclusive drains reads already dispatched to an isolate and
+    // blocks new ones, so no handle is alive against a file while it is swapped.
+    await DatabaseGateway.instance.runExclusive(() async {
     if (await historyFile.exists()) {
       report(ImportPhase.applying, 'Importing history');
       await HistoryManager().restoreFrom(historyFile.path);
@@ -568,9 +573,7 @@ Future<void> _importAppDataLocked(
       report(ImportPhase.applying, 'Importing local library');
       await LocalManager().restoreFrom(localDbFile.path);
     }
-    } finally {
-      DatabaseRestoreGuard.instance.endRestore();
-    }
+    });
     var comicSourceDir = FilePath.join(cacheDirPath, "comic_source");
     if (Directory(comicSourceDir).existsSync()) {
       report(ImportPhase.reloading);

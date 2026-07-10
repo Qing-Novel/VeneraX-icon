@@ -131,13 +131,19 @@ class ReadLaterManager with ChangeNotifier {
     notifyListeners();
   }
 
-  /// Replaces this store's content with the database at [sourcePath] without
-  /// closing or swapping the underlying file — see [overwriteDatabaseContent].
+  /// Replaces this store's content with the database file at [sourcePath] by
+  /// closing the connection, swapping the file, and reopening — see
+  /// [restoreDatabaseFiles]. Runs inside the caller's exclusive window.
   Future<void> restoreFrom(String sourcePath) async {
     if (!isInitialized) {
       throw StateError("ReadLaterManager is not initialized; cannot restore");
     }
-    await overwriteDatabaseContent(_db, sourcePath);
+    _db.dispose();
+    try {
+      restoreDatabaseFiles({_dbPath: sourcePath});
+    } finally {
+      _db = openSqliteDatabase(_dbPath);
+    }
     _db.execute(_createTableSql);
     _migrateSchema();
     _loadIds();
