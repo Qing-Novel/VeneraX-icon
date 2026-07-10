@@ -4,25 +4,38 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 import 'package:venera/foundation/app.dart';
+import 'package:venera/foundation/appdata.dart';
 import 'package:venera/foundation/image_provider/cached_image.dart';
 import 'package:venera/utils/app_links.dart';
 import 'package:venera/utils/ext.dart';
+
+/// The user-configured font size for comment body & user name text.
+/// Falls back to the framework default when unset.
+double get commentsFontSize {
+  final v = appdata.settings['commentsFontSize'];
+  if (v is num) return v.toDouble();
+  return 14.0;
+}
 
 /// A widget that displays comment content with support for rich text formatting.
 ///
 /// This widget intelligently decides whether to use simple text or rich formatting
 /// based on the content. It supports HTML tags and auto-linking of URLs.
 class CommentContent extends StatelessWidget {
-  const CommentContent({super.key, required this.text});
+  const CommentContent({super.key, required this.text, this.fontSize});
 
   final String text;
+
+  /// Explicit font size for the comment body. When null, inherits the ambient
+  /// [DefaultTextStyle] (used by compact previews that must not scale).
+  final double? fontSize;
 
   @override
   Widget build(BuildContext context) {
     if (!text.contains('<') && !text.contains('http')) {
-      return SelectableText(text);
+      return SelectableText(text, style: fontSize == null ? null : TextStyle(fontSize: fontSize));
     } else {
-      return RichCommentContent(text: text);
+      return RichCommentContent(text: text, fontSize: fontSize);
     }
   }
 }
@@ -124,11 +137,16 @@ class RichCommentContent extends StatefulWidget {
     super.key,
     required this.text,
     this.showImages = true,
+    this.fontSize,
   });
 
   final String text;
 
   final bool showImages;
+
+  /// Explicit font size for the comment body. When null, inherits the ambient
+  /// [DefaultTextStyle] (used by compact previews that must not scale).
+  final double? fontSize;
 
   @override
   State<RichCommentContent> createState() => _RichCommentContentState();
@@ -279,8 +297,12 @@ class _RichCommentContentState extends State<RichCommentContent> {
 
   @override
   Widget build(BuildContext context) {
+    var baseStyle = DefaultTextStyle.of(context).style;
+    if (widget.fontSize != null) {
+      baseStyle = baseStyle.copyWith(fontSize: widget.fontSize);
+    }
     Widget content = SelectableText.rich(
-      TextSpan(style: DefaultTextStyle.of(context).style, children: textSpan),
+      TextSpan(style: baseStyle, children: textSpan),
     );
     if (images.isNotEmpty && widget.showImages) {
       content = Column(

@@ -353,6 +353,7 @@ class Settings with ChangeNotifier {
     'localFavoritesFirst': true,
     'autoCloseFavoritePanel': false,
     'showChapterComments': true, // show chapter comments in reader
+    'commentsFontSize': 14.0, // font size for comment body & user name text
     'showChapterCommentsAtEnd':
         false, // show chapter comments at end of chapter
     'galleryFillScreen':

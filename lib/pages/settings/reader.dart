@@ -628,6 +628,16 @@ class _ReaderSettingsState extends State<ReaderSettings> {
                   isEnabledSpecificSettings ? widget.comicSource : null,
               useDeviceSettings: useDeviceSpecificSettings,
             ),
+            _SliderSetting(
+              title: "Comment font size".tl,
+              settingsIndex: "commentsFontSize",
+              interval: 1,
+              min: 12,
+              max: 24,
+              onChanged: () {
+                widget.onChanged?.call("commentsFontSize");
+              },
+            ),
             if (_isChapterCommentsAtEndSupported())
               _SwitchSetting(
                 title: "Show Comments at Chapter End".tl,

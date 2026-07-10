@@ -365,7 +365,10 @@ class _ChapterCommentTileState extends State<_ChapterCommentTile> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(widget.comment.userName, style: ts.bold),
+                Text(
+                  widget.comment.userName,
+                  style: ts.bold.copyWith(fontSize: commentsFontSize),
+                ),
                 if (widget.comment.time != null)
                   Text(widget.comment.time!, style: ts.s12),
                 const SizedBox(height: 4),
@@ -602,11 +605,7 @@ class _CommentContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!text.contains('<') && !text.contains('http')) {
-      return SelectableText(text);
-    } else {
-      return RichCommentContent(text: text);
-    }
+    return CommentContent(text: text, fontSize: commentsFontSize);
   }
 }
 
