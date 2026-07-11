@@ -751,7 +751,22 @@ class DataSync with ChangeNotifier {
           // read-later/comic-source managers, whose notifyListeners used to
           // fire onDataChanged and re-upload the just-downloaded data 2s
           // later, one version higher — aligned devices ping-ponged forever.
-          await applyBackup(() => importAppData(localFile, checkVersion: true));
+          //
+          // checkVersion is OFF on purpose. The filename gate above
+          // (remoteVersion <= currentVersion => return) is the authoritative
+          // "is this newer" test and already passed to get here; :764 below
+          // then re-aligns our version to it. importAppData's own gate instead
+          // compares the backup's INTERNAL syncdata.json dataVersion, which is
+          // structurally one BELOW its filename: an auto-upload only runs when
+          // the device is not behind (shouldSkipStaleUpload), so nextSyncVersion
+          // == local+1 stamps the filename, while exportAppData wrote the zip
+          // with the pre-bump `local` (the bump lands after — publish-first). So
+          // content == filename-1 always. When the other device is exactly one
+          // version ahead — the ordinary "changed once" case — that deflated
+          // label equals ours, the internal gate returns, and the whole import
+          // is skipped: the download logs success yet history/favorites/follow
+          // marks never apply. Trusting the filename gate fixes it.
+          await applyBackup(() => importAppData(localFile, checkVersion: false));
           if (!_hasCompletedInitialSync()) {
             _markInitialSyncCompleted();
           }
