@@ -3,17 +3,27 @@ import { pathToFileURL } from 'node:url';
 
 const ICON = 'https://raw.githubusercontent.com/Kyosee/venera/master/assets/app_icon.png';
 
-function template() {
+// The beta source is a separate AltStore feed for internal test builds. It uses
+// a distinct source name/identifier so a device can subscribe to it without
+// colliding with the stable feed, but keeps the SAME app bundleIdentifier — a
+// beta install upgrades the stable app in place (and vice-versa when a newer
+// stable ships), rather than installing a second copy.
+function template(beta) {
+  const suffix = beta ? ' (Beta)' : '';
   return {
-    name: 'Venera',
-    identifier: 'io.github.kyosee.venera',
-    subtitle: 'A cross-platform manga/comic reader',
+    name: `Venera${suffix}`,
+    identifier: beta ? 'io.github.kyosee.venera.beta' : 'io.github.kyosee.venera',
+    subtitle: beta
+      ? 'Venera internal test builds — not for general use'
+      : 'A cross-platform manga/comic reader',
     iconURL: ICON,
     apps: [{
-      name: 'Venera',
+      name: `Venera${suffix}`,
       bundleIdentifier: 'io.github.kyosee.venera',
       developerName: 'Kyosee',
-      subtitle: 'A cross-platform manga/comic reader',
+      subtitle: beta
+        ? 'Internal test builds — expect bugs'
+        : 'A cross-platform manga/comic reader',
       localizedDescription: 'Venera is a cross-platform manga/comic reader with self-hosted Web frontend support.',
       iconURL: ICON,
       category: 'entertainment',
@@ -38,7 +48,10 @@ function cmpDesc(a, b) {
 }
 
 export function buildSource(existing, input) {
-  const base = existing && Array.isArray(existing.apps) && existing.apps[0] ? existing : template();
+  const beta = input.beta === true;
+  const base = existing && Array.isArray(existing.apps) && existing.apps[0]
+    ? existing
+    : template(beta);
   const app = base.apps[0];
   if (!Array.isArray(app.versions)) app.versions = [];
 
@@ -85,6 +98,7 @@ function main() {
     downloadURL: process.env.DOWNLOAD_URL,
     size: process.env.SIZE,
     minOSVersion: process.env.MIN_OS || '14.0',
+    beta: process.env.BETA === 'true',
   });
 
   const out = JSON.stringify(next, null, 2) + '\n';
