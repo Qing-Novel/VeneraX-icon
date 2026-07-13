@@ -38,10 +38,13 @@ class _AboutSettingsState extends State<AboutSettings> {
           children: [
             const SizedBox(height: 8),
             Text("V${App.version}", style: const TextStyle(fontSize: 16)),
-            Text("VeneraX is a free and open-source, multi-platform comic reader forked from Venera and maintained with enhancements over the original.".tl),
+            Text(
+              "VeneraX is a free and open-source, multi-platform comic reader forked from Venera and maintained with enhancements over the original.".tl,
+              textAlign: TextAlign.center,
+            ),
             const SizedBox(height: 8),
           ],
-        ).toSliver(),
+        ).paddingHorizontal(16).toSliver(),
         ListTile(
           title: Text("Check for updates".tl),
           trailing: Button.filled(
