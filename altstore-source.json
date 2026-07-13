@@ -15,6 +15,15 @@
       "screenshots": [],
       "versions": [
         {
+          "version": "2.1.9",
+          "buildVersion": "225",
+          "date": "2026-07-13",
+          "localizedDescription": "## What's Changed\n\n### Added\n- Customizable tap zones: set each screen edge (top / bottom / left / right) to previous page, next page, or none\n- Continuous mode: option to vertically center a short page after turning\n- Continuous mode: adjustable spacing between images\n\n### Changed\n- The app has been renamed to VeneraX with a new logo\n\n### Fixed\n- Seamless chapter reading: fixed tap-to-turn reloading the page after scrolling\n- Seamless chapter reading: fixed tap-to-turn not crossing into the next chapter on the join page\n- Fixed center-on-turn only turning a single page in continuous mode\n\n**Full Changelog**: https://github.com/Kyosee/VeneraX/compare/v2.1.8...v2.1.9",
+          "downloadURL": "https://github.com/Kyosee/VeneraX/releases/download/v2.1.9/venera-ios-2.1.9%2B225.ipa",
+          "size": 24016933,
+          "minOSVersion": "14.0"
+        },
+        {
           "version": "2.1.8",
           "buildVersion": "224",
           "date": "2026-07-11",
@@ -114,11 +123,11 @@
           "minOSVersion": "14.0"
         }
       ],
-      "version": "2.1.8",
-      "versionDate": "2026-07-11",
-      "versionDescription": "## What's Changed\n\n### Added\n- WebDAV sync frequency now offers three modes: real-time, data-saving, and manual-only\n- The number of WebDAV backups to keep is now configurable\n\n### Changed\n- More reliable cross-device sync of read / unread marks for followed updates: the more recent side wins, so marking as read on one device clears the unread mark on others\n\n### Fixed\n- Fixed a crash after importing data or syncing via WebDAV\n- Fixed backups not being created after enabling automatic sync\n- Fixed the \"finished\" mark not showing in the top-left corner after reading all chapters in continuous scroll mode\n- Fixed Traditional/Simplified Chinese conversion not working in some cases\n\n**Full Changelog**: https://github.com/Kyosee/venera/compare/v2.1.7...v2.1.8",
-      "downloadURL": "https://github.com/Kyosee/venera/releases/download/v2.1.8/venera-ios-2.1.8%2B224.ipa",
-      "size": 23122552
+      "version": "2.1.9",
+      "versionDate": "2026-07-13",
+      "versionDescription": "## What's Changed\n\n### Added\n- Customizable tap zones: set each screen edge (top / bottom / left / right) to previous page, next page, or none\n- Continuous mode: option to vertically center a short page after turning\n- Continuous mode: adjustable spacing between images\n\n### Changed\n- The app has been renamed to VeneraX with a new logo\n\n### Fixed\n- Seamless chapter reading: fixed tap-to-turn reloading the page after scrolling\n- Seamless chapter reading: fixed tap-to-turn not crossing into the next chapter on the join page\n- Fixed center-on-turn only turning a single page in continuous mode\n\n**Full Changelog**: https://github.com/Kyosee/VeneraX/compare/v2.1.8...v2.1.9",
+      "downloadURL": "https://github.com/Kyosee/VeneraX/releases/download/v2.1.9/venera-ios-2.1.9%2B225.ipa",
+      "size": 24016933
     }
   ],
   "news": []
