@@ -276,6 +276,9 @@ class ExportTaskManager with ChangeNotifier {
   Future<void> _run(ExportTask task) async {
     final cacheDir = Directory(FilePath.join(App.cachePath, 'export_task', task.id));
     _refreshKeepAlive(task);
+    // Remember the last per-comic failure so a task where every comic failed can
+    // report the real cause instead of masquerading as a success (#130).
+    String? lastError;
     try {
       if (!cacheDir.existsSync()) {
         cacheDir.createSync(recursive: true);
@@ -366,6 +369,7 @@ class ExportTaskManager with ChangeNotifier {
           } catch (e, s) {
             Log.error('Export Comics', e.toString(), s);
             task.failedCount++;
+            lastError = e.toString();
           }
           task.doneKeys.add(ref.key);
           notifyListeners();
@@ -374,11 +378,31 @@ class ExportTaskManager with ChangeNotifier {
       }
 
       if (task.status == ExportTaskStatus.running) {
-        task.status = ExportTaskStatus.completed;
+        // Every comic failing (e.g. the destination folder rejects file
+        // creation on some Android SAF providers) previously still finished as
+        // "completed", so the UI cheerfully reported success while nothing was
+        // written (#130). Surface it as a failure with the real cause instead.
+        if (task.failedCount >= task.total && task.total > 0) {
+          task.status = ExportTaskStatus.failed;
+          // The overwhelmingly common cause of every write failing is the
+          // chosen folder refusing file creation (some Android SAF providers,
+          // e.g. MIUI's Download tree, return null from createDocument). Give an
+          // actionable message instead of a raw FileSystemException string; the
+          // real error is still in the log via Log.error above.
+          task.error = _looksLikeCreateFailure(lastError)
+              ? 'Cannot write to the selected folder, please choose another'
+              : (lastError ?? 'Export failed');
+        } else {
+          task.status = ExportTaskStatus.completed;
+        }
       }
     } catch (e, s) {
       task.status = ExportTaskStatus.failed;
-      task.error = e.toString();
+      // Same actionable message for the folder-rejects-creation case, which in
+      // merged mode surfaces here rather than the per-comic loop above (#130).
+      task.error = _looksLikeCreateFailure(e.toString())
+          ? 'Cannot write to the selected folder, please choose another'
+          : e.toString();
       Log.error('Export Comics', e.toString(), s);
     } finally {
       cacheDir.deleteIgnoreError(recursive: true);
@@ -421,6 +445,15 @@ class ExportTaskManager with ChangeNotifier {
         notifyListeners();
       }
     };
+  }
+
+  /// True when the failure looks like the destination folder rejecting file
+  /// creation (as opposed to a per-comic build error). Some Android SAF
+  /// providers return null from createDocument for certain trees, which
+  /// flutter_saf surfaces as "Cannot create file specified" (#130).
+  bool _looksLikeCreateFailure(String? error) {
+    if (error == null) return false;
+    return error.contains('Cannot create file');
   }
 
   void _refreshKeepAlive(ExportTask task) {
