@@ -275,6 +275,7 @@ class _AppSettingsState extends State<AppSettings> {
               },
               actionTitle: 'Set'.tl,
             ),
+            const _WebdavSyncOptions(),
             _CallbackSetting(
               title: "Sync Logs".tl,
               callback: () async {
@@ -635,15 +636,6 @@ class _WebdavSettingState extends State<_WebdavSetting> {
 
   WebdavSyncMode syncMode = WebdavSyncMode.realtime;
 
-  int backupRetention = backupRetentionPerPlatform;
-
-  /// The retention choices offered in the UI. Foreign synced values outside
-  /// this list still work (sanitized on use); the selector then shows the
-  /// sanitized number as-is.
-  static const _retentionChoices = [3, 5, 10, 20];
-
-  bool useProxy = true;
-
   bool syncLocalComicImages = false;
 
   bool isTesting = false;
@@ -666,51 +658,10 @@ class _WebdavSettingState extends State<_WebdavSetting> {
       pass = configs[2];
     }
     // Reads through the legacy-webdavAutoSync migration in DataSync.syncMode.
+    // Still needed here: the QR share/scan and Save paths carry the mode even
+    // though the mode/retention/proxy selectors now live in _WebdavSyncOptions.
     syncMode = DataSync().syncMode;
-    backupRetention = sanitizedBackupRetention(
-      appdata.settings['webdavBackupRetention'],
-    );
-    useProxy = appdata.settings['webdavUseProxy'] != false;
     syncLocalComicImages = appdata.settings['syncLocalComicImages'] ?? false;
-  }
-
-  String _syncModeLabel(WebdavSyncMode mode) => switch (mode) {
-        WebdavSyncMode.realtime => "Realtime".tl,
-        WebdavSyncMode.dataSaver => "Data Saver".tl,
-        WebdavSyncMode.manual => "Manual Only".tl,
-      };
-
-  String _syncModeDescription(WebdavSyncMode mode) => switch (mode) {
-        WebdavSyncMode.realtime => "Upload shortly after every change".tl,
-        WebdavSyncMode.dataSaver =>
-          "Batch changes; upload on app switch / resume, at most every 30 minutes"
-              .tl,
-        WebdavSyncMode.manual => "Upload only when triggered manually".tl,
-      };
-
-  void onSyncModeChanged(WebdavSyncMode mode) {
-    setState(() {
-      syncMode = mode;
-      // Persists immediately (like the old auto-sync switch) so the choice
-      // survives even if the user leaves without tapping Save.
-      DataSync().setSyncMode(mode);
-    });
-  }
-
-  void onBackupRetentionChanged(int value) {
-    setState(() {
-      backupRetention = value;
-      appdata.settings['webdavBackupRetention'] = value;
-      appdata.saveData();
-    });
-  }
-
-  void onUseProxyChanged(bool value) {
-    setState(() {
-      useProxy = value;
-      appdata.settings['webdavUseProxy'] = value;
-      appdata.saveData();
-    });
   }
 
   /// Shows the current config as a PIN-encrypted QR code for another device to
@@ -1070,61 +1021,6 @@ class _WebdavSettingState extends State<_WebdavSetting> {
                 ),
               ),
             ),
-            const SizedBox(height: 12),
-            ListTile(
-              leading: const Icon(Icons.sync),
-              title: Text("Sync Mode".tl),
-              subtitle: Text(
-                _syncModeDescription(syncMode),
-                style: const TextStyle(fontSize: 12),
-              ),
-              contentPadding: EdgeInsets.zero,
-              trailing: Select(
-                current: _syncModeLabel(syncMode),
-                values: WebdavSyncMode.values.map(_syncModeLabel).toList(),
-                minWidth: 84,
-                onTap: (index) =>
-                    onSyncModeChanged(WebdavSyncMode.values[index]),
-              ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.history),
-              title: Text("Backups to keep per platform".tl),
-              subtitle: Text(
-                "Older backups on the server are removed after each upload".tl,
-                style: const TextStyle(fontSize: 12),
-              ),
-              contentPadding: EdgeInsets.zero,
-              trailing: Select(
-                current: backupRetention.toString(),
-                values: [
-                  // A synced value outside the offered list stays selectable
-                  // instead of rendering an empty selector.
-                  if (!_retentionChoices.contains(backupRetention))
-                    backupRetention.toString(),
-                  ..._retentionChoices.map((e) => e.toString()),
-                ],
-                minWidth: 64,
-                onTap: (index) {
-                  var values = [
-                    if (!_retentionChoices.contains(backupRetention))
-                      backupRetention,
-                    ..._retentionChoices,
-                  ];
-                  onBackupRetentionChanged(values[index]);
-                },
-              ),
-            ),
-            ListTile(
-              leading: Icon(Icons.lan_outlined),
-              title: Text("Use Proxy for Sync".tl),
-              subtitle: Text(
-                "Route WebDAV sync through the app proxy. Turn off if an unstable proxy makes sync fail.".tl,
-                style: const TextStyle(fontSize: 12),
-              ),
-              contentPadding: EdgeInsets.zero,
-              trailing: Switch(value: useProxy, onChanged: onUseProxyChanged),
-            ),
             const SizedBox(height: 8),
             SwitchListTile(
               title: Text("${"Sync Local Comic Images".tl}（${"Experimental".tl}）"),
@@ -1216,6 +1112,138 @@ class _WebdavSettingState extends State<_WebdavSetting> {
           ],
         ).paddingHorizontal(16),
       ),
+    );
+  }
+}
+
+/// The sync-mode / backup-retention / proxy options, surfaced directly under
+/// the "WebDAV Sync" group header instead of inside the connection dialog.
+/// Moved out because on shorter screens the dialog's growing content pushed
+/// the Save button off-screen behind a scroll region (#114 follow-up).
+class _WebdavSyncOptions extends StatefulWidget {
+  const _WebdavSyncOptions();
+
+  @override
+  State<_WebdavSyncOptions> createState() => _WebdavSyncOptionsState();
+}
+
+class _WebdavSyncOptionsState extends State<_WebdavSyncOptions> {
+  WebdavSyncMode syncMode = WebdavSyncMode.realtime;
+
+  int backupRetention = backupRetentionPerPlatform;
+
+  /// The retention choices offered in the UI. Foreign synced values outside
+  /// this list still work (sanitized on use); the selector then shows the
+  /// sanitized number as-is.
+  static const _retentionChoices = [3, 5, 10, 20];
+
+  bool useProxy = true;
+
+  @override
+  void initState() {
+    super.initState();
+    // Reads through the legacy-webdavAutoSync migration in DataSync.syncMode.
+    syncMode = DataSync().syncMode;
+    backupRetention = sanitizedBackupRetention(
+      appdata.settings['webdavBackupRetention'],
+    );
+    useProxy = appdata.settings['webdavUseProxy'] != false;
+  }
+
+  String _syncModeLabel(WebdavSyncMode mode) => switch (mode) {
+        WebdavSyncMode.realtime => "Realtime".tl,
+        WebdavSyncMode.dataSaver => "Data Saver".tl,
+        WebdavSyncMode.manual => "Manual Only".tl,
+      };
+
+  String _syncModeDescription(WebdavSyncMode mode) => switch (mode) {
+        WebdavSyncMode.realtime => "Upload shortly after every change".tl,
+        WebdavSyncMode.dataSaver =>
+          "Batch changes; upload on app switch / resume, at most every 30 minutes"
+              .tl,
+        WebdavSyncMode.manual => "Upload only when triggered manually".tl,
+      };
+
+  void onSyncModeChanged(WebdavSyncMode mode) {
+    setState(() {
+      syncMode = mode;
+      DataSync().setSyncMode(mode);
+    });
+  }
+
+  void onBackupRetentionChanged(int value) {
+    setState(() {
+      backupRetention = value;
+      appdata.settings['webdavBackupRetention'] = value;
+      appdata.saveData();
+    });
+  }
+
+  void onUseProxyChanged(bool value) {
+    setState(() {
+      useProxy = value;
+      appdata.settings['webdavUseProxy'] = value;
+      appdata.saveData();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ListTile(
+          leading: const Icon(Icons.sync),
+          title: Text("Sync Mode".tl),
+          subtitle: Text(
+            _syncModeDescription(syncMode),
+            style: const TextStyle(fontSize: 12),
+          ),
+          trailing: Select(
+            current: _syncModeLabel(syncMode),
+            values: WebdavSyncMode.values.map(_syncModeLabel).toList(),
+            minWidth: 84,
+            onTap: (index) => onSyncModeChanged(WebdavSyncMode.values[index]),
+          ),
+        ),
+        ListTile(
+          leading: const Icon(Icons.history),
+          title: Text("Backups to keep per platform".tl),
+          subtitle: Text(
+            "Older backups on the server are removed after each upload".tl,
+            style: const TextStyle(fontSize: 12),
+          ),
+          trailing: Select(
+            current: backupRetention.toString(),
+            values: [
+              // A synced value outside the offered list stays selectable
+              // instead of rendering an empty selector.
+              if (!_retentionChoices.contains(backupRetention))
+                backupRetention.toString(),
+              ..._retentionChoices.map((e) => e.toString()),
+            ],
+            minWidth: 64,
+            onTap: (index) {
+              var values = [
+                if (!_retentionChoices.contains(backupRetention))
+                  backupRetention,
+                ..._retentionChoices,
+              ];
+              onBackupRetentionChanged(values[index]);
+            },
+          ),
+        ),
+        ListTile(
+          leading: const Icon(Icons.lan_outlined),
+          title: Text("Use Proxy for Sync".tl),
+          subtitle: Text(
+            "Route WebDAV sync through the app proxy. Turn off if an unstable proxy makes sync fail."
+                .tl,
+            style: const TextStyle(fontSize: 12),
+          ),
+          trailing: Switch(value: useProxy, onChanged: onUseProxyChanged),
+        ),
+      ],
     );
   }
 }
