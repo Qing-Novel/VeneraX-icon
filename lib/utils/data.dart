@@ -540,6 +540,9 @@ Future<void> _importAppDataLocked(
             // its "owes an upload" state.
             'webdavSyncMode',
             'webdavPendingChanges',
+            // The unconfirmed-upload record (#133) names a file THIS device
+            // PUT; a restored backup must not forge or erase it.
+            'webdavPendingPublish',
             'hasCompletedInitialSync',
             'sync_logs',
             'data_sync_tasks',

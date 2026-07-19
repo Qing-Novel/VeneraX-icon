@@ -436,4 +436,83 @@ void main() {
     });
   });
 
+  group('isOwnPendingPublish (#133)', () {
+    test('matches recorded file name and size', () {
+      // The self-rollback scenario: a PUT landed server-side but the client
+      // saw a failure (undecodable response body). The newest remote backup
+      // is this device's own snapshot — it must be reclaimed, not downloaded.
+      expect(
+        isOwnPendingPublish(
+          claimedFileName: '20621-8.android.venera',
+          claimedSize: 12345,
+          remoteFileName: '20621-8.android.venera',
+          remoteSize: 12345,
+        ),
+        isTrue,
+      );
+    });
+
+    test('different file name is not ours (PUT truly failed or superseded)',
+        () {
+      expect(
+        isOwnPendingPublish(
+          claimedFileName: '20621-8.android.venera',
+          claimedSize: 12345,
+          remoteFileName: '20621-9.windows.venera',
+          remoteSize: 12345,
+        ),
+        isFalse,
+      );
+    });
+
+    test('size mismatch means a truncated PUT and must not be claimed', () {
+      // Claiming a truncated upload would adopt a version whose server copy
+      // is corrupt; the normal download path surfaces that loudly instead.
+      expect(
+        isOwnPendingPublish(
+          claimedFileName: '20621-8.android.venera',
+          claimedSize: 12345,
+          remoteFileName: '20621-8.android.venera',
+          remoteSize: 999,
+        ),
+        isFalse,
+      );
+    });
+
+    test('unknown size on either side falls back to name-only match', () {
+      // Some WebDAV servers omit sizes in PROPFIND; the name (day + version +
+      // platform) is specific enough on its own.
+      expect(
+        isOwnPendingPublish(
+          claimedFileName: '20621-8.android.venera',
+          claimedSize: null,
+          remoteFileName: '20621-8.android.venera',
+          remoteSize: 12345,
+        ),
+        isTrue,
+      );
+      expect(
+        isOwnPendingPublish(
+          claimedFileName: '20621-8.android.venera',
+          claimedSize: 12345,
+          remoteFileName: '20621-8.android.venera',
+          remoteSize: null,
+        ),
+        isTrue,
+      );
+    });
+
+    test('no recorded claim never matches', () {
+      expect(
+        isOwnPendingPublish(
+          claimedFileName: null,
+          claimedSize: null,
+          remoteFileName: '20621-8.android.venera',
+          remoteSize: 12345,
+        ),
+        isFalse,
+      );
+    });
+  });
+
 }

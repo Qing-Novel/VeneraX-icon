@@ -95,6 +95,38 @@ int maxBackupVersion(Iterable<String?> fileNames) {
   return max;
 }
 
+/// Whether the newest backup on the server is the very file this device
+/// uploaded but never confirmed (#133).
+///
+/// An upload PUT can succeed server-side while the client still reports
+/// failure — the response body fails to decode, the request times out after
+/// the server committed, or the process dies before the local `dataVersion`
+/// is adopted (version adoption is deliberately publish-first). The server is
+/// then left holding an "orphan" backup: this device's own snapshot, stamped
+/// one version above the device's local claim. On the next sync the device
+/// sees itself as behind, pulls its own stale snapshot back, and every read
+/// made since that export is reverted — then re-uploaded one version higher,
+/// spreading the rollback to the whole fleet.
+///
+/// Matching the file name recorded immediately before the PUT (plus the size,
+/// when both sides report one — a size mismatch means a truncated PUT whose
+/// content must NOT be claimed) lets the device adopt the orphan's version
+/// instead of downloading it. Pure function.
+bool isOwnPendingPublish({
+  required String? claimedFileName,
+  required int? claimedSize,
+  required String remoteFileName,
+  required int? remoteSize,
+}) {
+  if (claimedFileName == null || claimedFileName != remoteFileName) {
+    return false;
+  }
+  if (claimedSize != null && remoteSize != null && claimedSize != remoteSize) {
+    return false;
+  }
+  return true;
+}
+
 /// Automation tier for WebDAV data sync (#114). Stored PER DEVICE (in
 /// implicitData, never synced): cadence is a property of the device and its
 /// connection — a phone on a metered plan and a desktop on wifi legitimately

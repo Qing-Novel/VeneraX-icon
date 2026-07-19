@@ -193,6 +193,7 @@ class DataSync with ChangeNotifier, WidgetsBindingObserver {
 
   static const _syncModeKey = 'webdavSyncMode';
   static const _pendingChangesKey = 'webdavPendingChanges';
+  static const _pendingPublishKey = 'webdavPendingPublish';
 
   /// How long the FIRST unsynced change may sit local in data-saver mode
   /// before a mid-session settle uploads it anyway. Bounds cloud staleness
@@ -272,6 +273,34 @@ class DataSync with ChangeNotifier, WidgetsBindingObserver {
     appdata.implicitData[_pendingChangesKey] = false;
     appdata.writeImplicitData();
     notifyListeners();
+  }
+
+  /// File name + size of an upload PUT this device sent but never confirmed
+  /// (#133). Recorded (persisted, device-local) immediately before the PUT and
+  /// cleared once the version is adopted, so a publish that landed without the
+  /// client learning it (undecodable response, timeout, process death) can be
+  /// reclaimed by [downloadData] instead of pulled back over newer local data.
+  ({String fileName, int? size})? get _pendingPublish {
+    final v = appdata.implicitData[_pendingPublishKey];
+    if (v is! Map) return null;
+    final name = v['fileName']?.toString();
+    if (name == null || name.isEmpty) return null;
+    final size = v['size'];
+    return (fileName: name, size: size is int ? size : null);
+  }
+
+  void _setPendingPublish(String fileName, int size) {
+    appdata.implicitData[_pendingPublishKey] = {
+      'fileName': fileName,
+      'size': size,
+    };
+    appdata.writeImplicitData();
+  }
+
+  void _clearPendingPublish() {
+    if (appdata.implicitData.remove(_pendingPublishKey) != null) {
+      appdata.writeImplicitData();
+    }
   }
 
   /// Uploads the pending account if one is open. The data-saver settle
@@ -465,6 +494,27 @@ class DataSync with ChangeNotifier, WidgetsBindingObserver {
       }
     }
     return best;
+  }
+
+  /// Whether [fileName] actually exists on the server with [expectedSize]
+  /// (size check skipped when the server does not report one). Used after a
+  /// failed PUT to detect a publish that landed anyway (#133). Any probe
+  /// error means "unknown" → false; the persisted pending-publish record then
+  /// reconciles on a later sync.
+  Future<bool> _publishLanded(
+    Client client,
+    String fileName,
+    int expectedSize,
+  ) async {
+    try {
+      final files = await client.readDir('/');
+      for (final f in files) {
+        if (f.name == fileName) {
+          return f.size == null || f.size == expectedSize;
+        }
+      }
+    } catch (_) {}
+    return false;
   }
 
   bool _hasCompletedInitialSync() {
@@ -743,12 +793,38 @@ class DataSync with ChangeNotifier, WidgetsBindingObserver {
         // in RAM before the PUT — the same OOM class #93 fixed for local
         // export, fatal for large libraries on mobile.
         taskManager.updateTask(task.id, currentPhase: 'Uploading', progress: 0.7);
-        await client.writeFromFile(data.path, filename);
+        // Record the publish attempt BEFORE the PUT (#133). The PUT can land
+        // on the server while this client still sees a failure — the response
+        // body fails to decode (rhttp "error decoding response body"), the
+        // request times out after the server committed, or the process dies
+        // before the version is adopted below. The server is then holding our
+        // own snapshot one version above our local claim; without this record
+        // the next sync reads "local behind server", pulls our own stale
+        // snapshot back and reverts everything read since the export — then
+        // re-uploads the reverted state, spreading it fleet-wide.
+        // downloadData() consults the record and reclaims the orphan instead.
+        _setPendingPublish(filename, fileSize);
+        try {
+          await client.writeFromFile(data.path, filename);
+        } catch (e) {
+          // The PUT may have succeeded even though its response was lost.
+          // Probe once: if the backup is on the server with the expected
+          // size, the publish landed — continue as success so the version is
+          // adopted and no orphan is left. Probe failure keeps the persisted
+          // record for downloadData to reconcile later.
+          if (!await _publishLanded(client, filename, fileSize)) rethrow;
+          Log.info(
+            "Upload Data",
+            "PUT reported failure but the backup landed on the server; "
+                "treating as success: $e",
+          );
+        }
         data.deleteIgnoreError();
 
         // The backup is on the server — only now adopt the version locally.
         appdata.settings['dataVersion'] = nextVersion;
         await appdata.saveData(false);
+        _clearPendingPublish();
         // The published snapshot covers every change up to the export —
         // settle the deferred-tier account (no-op unless it was open and
         // nothing landed mid-upload).
@@ -893,6 +969,43 @@ class DataSync with ChangeNotifier, WidgetsBindingObserver {
           Log.info("Data Sync", 'No backups on server; initial sync complete');
           taskManager.completeTask(task.id);
           return const Res(true);
+        }
+        // Reconcile an unconfirmed upload (#133): when the newest backup on
+        // the server is the very file this device PUT but never confirmed,
+        // its content is our own PAST snapshot — current local data already
+        // supersedes it. Adopt its version instead of downloading, which
+        // would revert every read made since that export (and the follow-up
+        // settle would re-upload the reverted state fleet-wide). When the
+        // newest backup is anything else, the record is obsolete — the PUT
+        // truly failed, or another device published since — so drop it and
+        // sync normally.
+        final claim = _pendingPublish;
+        if (claim != null) {
+          if (isOwnPendingPublish(
+            claimedFileName: claim.fileName,
+            claimedSize: claim.size,
+            remoteFileName: file.name!,
+            remoteSize: file.size,
+          )) {
+            final reclaimed = _versionOfFileName(file.name!);
+            if (reclaimed > _dataVersion()) {
+              appdata.settings['dataVersion'] = reclaimed;
+              await appdata.saveData(false);
+            }
+            _clearPendingPublish();
+            if (!_hasCompletedInitialSync()) {
+              _markInitialSyncCompleted();
+            }
+            Log.info(
+              "Data Sync",
+              "Newest server backup is this device's own unconfirmed upload; "
+                  "adopted v$reclaimed without downloading",
+            );
+            _addSyncLog('download', file.name, true, null);
+            taskManager.completeTask(task.id, fileName: file.name);
+            return const Res(true);
+          }
+          _clearPendingPublish();
         }
         var remoteVersion = _versionOfFileName(file.name!);
         var currentVersion = _dataVersion();
