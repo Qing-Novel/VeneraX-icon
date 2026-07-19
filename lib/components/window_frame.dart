@@ -79,7 +79,12 @@ class _WindowFrameState extends State<WindowFrame> {
   }
 
   void _onClose() {
-    for (var listener in closeListeners) {
+    // LIFO: later-registered listeners sit on top of the UI stack (e.g. the
+    // reader) and must get the first chance to veto by popping their route.
+    // Early-registered app-level listeners (e.g. DataSync's settle-on-exit)
+    // then only run when nothing above vetoed — a genuine exit. Iterate a
+    // copy so a veto that tears down its owner can't mutate the list mid-loop.
+    for (var listener in closeListeners.reversed.toList()) {
       if (!listener()) {
         return;
       }
