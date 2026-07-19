@@ -680,8 +680,11 @@ class _ComicPageState extends LoadingState<ComicPage, ComicDetails>
       textStyle: TextStyle(fontSize: labelSize, fontWeight: FontWeight.w600),
       iconSize: iconSize,
     );
+    // Any recorded progress counts — a comic left at chapter 1 page 1 still
+    // has a history entry, and the user expects a Continue button whenever
+    // the history list shows one (issue #135).
     final hasHistory =
-        history != null && (history!.ep > 1 || history!.page > 1);
+        history != null && (history!.ep > 0 || history!.page > 0);
     if (!hasHistory) {
       // 单按钮：宽屏下独占整个封面高度（100%），窄屏保持固定高度。
       return SizedBox(

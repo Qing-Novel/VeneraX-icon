@@ -1,6 +1,7 @@
 import 'dart:async' show Future;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:venera/foundation/comic_type.dart';
 import 'package:venera/foundation/local.dart';
 import 'package:venera/network/images.dart';
 import '../history.dart';
@@ -27,6 +28,13 @@ class HistoryImageProvider
         // back to scanning the comic directory (issue #38) instead of throwing
         // and leaving the history tile blank.
         return LocalComicImageProvider(localComic).load(chunkEvents, checkStop);
+      }
+      if (history.type == ComicType.local) {
+        // A local-type history entry whose comic is gone (deleted, or synced
+        // from another device — local files never travel with WebDAV sync,
+        // issue #139). There is no source to re-fetch a cover from; fail
+        // cleanly instead of "Comic source not found".
+        throw "Local comic not found.";
       }
       var comicSource =
           history.type.comicSource ?? (throw "Comic source not found.");

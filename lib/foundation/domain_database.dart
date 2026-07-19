@@ -924,6 +924,27 @@ class DomainDatabase {
     );
   }
 
+  /// Removes a source comic and all of its dependent rows (work links, local
+  /// library item, chapters, history events, favorites — via FK cascade).
+  ///
+  /// Local comic ids are reused after deletion ([LocalManager.findValidId]),
+  /// so a stale mirror left behind would attach the old comic's work link —
+  /// and therefore its title/cover — to the next comic that gets the same id
+  /// (issue #135). Works left without any source are cleaned up as well.
+  void removeComicSource({
+    required SourcePlatformRef platform,
+    required String sourceComicId,
+  }) {
+    final comicId = comicIdFor(platform, sourceComicId);
+    db.execute('DELETE FROM comics WHERE comic_id = ?;', [comicId]);
+    db.execute(
+      '''
+      DELETE FROM works
+      WHERE work_id NOT IN (SELECT DISTINCT work_id FROM work_sources);
+      ''',
+    );
+  }
+
   void markLocalLibraryItem({
     required String comicId,
     required String directory,

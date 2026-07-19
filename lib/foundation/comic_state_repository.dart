@@ -236,10 +236,13 @@ class ComicStateRepository {
     ]);
 
     return ComicDisplayInfo(
+      // A local comic's own metadata is ground truth — the domain row may
+      // carry a stale work link from a deleted comic whose id was reused
+      // (issue #135), so it must not override the local title/cover.
       title:
           _pick([
-            domain?.title,
             localComic?.title,
+            domain?.title,
             updateInfo?.title,
             favorite?.title,
             history?.title,
@@ -248,8 +251,8 @@ class ComicStateRepository {
           comic.title,
       cover:
           _pick([
-            domain?.coverUri,
             localComic?.cover,
+            domain?.coverUri,
             updateInfo?.cover,
             favorite?.cover,
             history?.cover,
@@ -427,6 +430,27 @@ class ComicStateRepository {
         _mirrorCommonState(identity, comicId);
       },
     );
+  }
+
+  /// Purges the domain mirror of a deleted local comic. Local ids are reused,
+  /// so leaving the mirror behind would let the next comic with the same id
+  /// inherit the old comic's work link (title/cover) — issue #135.
+  void removeLocalComicMirror(String sourceComicId) {
+    if (!_domainReady) {
+      return;
+    }
+    try {
+      final identity = identityFor(
+        SourcePlatformResolver.localCanonicalKey,
+        sourceComicId,
+      );
+      _db.removeComicSource(
+        platform: identity.platform,
+        sourceComicId: sourceComicId,
+      );
+    } catch (error, stackTrace) {
+      Log.warning('Domain mirror purge failed', '$error\n$stackTrace');
+    }
   }
 
   String mirrorLocalComic(LocalComic comic) {

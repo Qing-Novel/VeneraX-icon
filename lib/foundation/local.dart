@@ -149,6 +149,14 @@ class LocalComic with HistoryMixin implements Comic {
 
   void read() {
     var history = HistoryManager().find(id, comicType);
+    // Local ids are reused after deletion, so a surviving history row may
+    // still carry the previous comic's title/cover (issue #135). Refresh the
+    // display fields from the comic itself before the reader persists it.
+    if (history != null) {
+      history.title = title;
+      history.subtitle = subtitle;
+      history.cover = cover;
+    }
     int? firstDownloadedChapter;
     int? firstDownloadedChapterGroup;
     if (downloadedChapters.isNotEmpty && chapters != null) {
@@ -1097,6 +1105,7 @@ class LocalManager with ChangeNotifier {
       for (var f in folders) {
         LocalFavoritesManager().deleteComicWithId(f, c.id, c.comicType);
       }
+      const ComicStateRepository().removeLocalComicMirror(c.id);
     }
     remove(c.id, c.comicType);
     notifyListeners();
@@ -1119,6 +1128,9 @@ class LocalManager with ChangeNotifier {
         c.id,
         c.comicType.value,
       ]);
+      if (c.comicType == ComicType.local) {
+        const ComicStateRepository().removeLocalComicMirror(c.id);
+      }
     }
     var shouldRemovedDirs = <Directory>[];
     for (var chapter in chapters) {
@@ -1167,6 +1179,12 @@ class LocalManager with ChangeNotifier {
     _db.execute('COMMIT;');
 
     var comicIDs = comics.map((e) => ComicID(e.comicType, e.id)).toList();
+
+    for (var c in comics) {
+      if (c.comicType == ComicType.local) {
+        const ComicStateRepository().removeLocalComicMirror(c.id);
+      }
+    }
 
     if (removeFavoriteAndHistory) {
       LocalFavoritesManager().batchDeleteComicsInAllFolders(comicIDs);

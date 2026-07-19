@@ -136,6 +136,14 @@ abstract mixin class _ComicPageActions {
   ///
   /// [group] the chapter group number, start from 1
   void read([int? ep, int? page, int? group]) {
+    // Heal a stale history row (e.g. a reused local id whose old record kept
+    // the previous comic's title/cover, issue #135) before the reader
+    // persists it again.
+    if (history != null) {
+      history!.title = comic.title;
+      history!.subtitle = comic.subTitle ?? '';
+      history!.cover = comic.cover;
+    }
     App.rootContext
         .to(
           () => Reader(

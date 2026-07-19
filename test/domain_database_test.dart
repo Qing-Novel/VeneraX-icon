@@ -338,4 +338,59 @@ void main() {
       }
     },
   );
+
+  test('removeComicSource purges mirror so a reused local id starts clean', () async {
+    final tempDir = Directory.systemTemp.createTempSync('venera_domain_db_');
+    final domain = DomainDatabase();
+
+    try {
+      await domain.init(tempDir.path);
+      final local = SourcePlatformResolver.fromSourceKey('local');
+      final comicId = domain.ensureComicSource(
+        platform: local,
+        sourceComicId: '1',
+        title: 'Old Comic',
+        coverUri: 'cover.jpg',
+        timestamp: 30,
+      );
+      domain.markLocalLibraryItem(
+        comicId: comicId,
+        directory: 'old-comic',
+        timestamp: 31,
+      );
+      // Simulate an accepted work link carrying the old comic's metadata.
+      domain.ensureWorkForComic(comicId: comicId, timestamp: 32);
+      expect(domain.getComicBaseInfo(comicId)!.title, 'Old Comic');
+
+      domain.removeComicSource(platform: local, sourceComicId: '1');
+
+      expect(domain.getComicBaseInfo(comicId), isNull);
+      for (final table in [
+        'comic_sources',
+        'work_sources',
+        'works',
+        'local_library_items',
+      ]) {
+        expect(
+          domain.db
+              .select('SELECT COUNT(*) AS count FROM $table;')
+              .single['count'],
+          0,
+          reason: '$table should be empty after purge',
+        );
+      }
+
+      // The next comic reusing id '1' must not inherit the old title.
+      final reusedId = domain.ensureComicSource(
+        platform: local,
+        sourceComicId: '1',
+        title: 'New Comic',
+        timestamp: 40,
+      );
+      expect(domain.getComicBaseInfo(reusedId)!.title, 'New Comic');
+    } finally {
+      domain.close();
+      tempDir.deleteSync(recursive: true);
+    }
+  });
 }
